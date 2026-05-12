@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="IL2CPP Dumper/Testicle.vcxproj" Id="8df73137-13fa-4256-9340-16b286bd4ccc" />
+</Solution>

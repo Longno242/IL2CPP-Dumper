@@ -1,0 +1,50 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userprefs
+
+# Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+Win32/
+ARM64/
+
+# Build artifacts
+*.tlog
+*.log
+*.lastbuildstate
+*.recipe
+*.obj
+*.pch
+*.ipch
+*.idb
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+*.iobj
+*.ipdb
+
+# IntelliSense / VC++ caches
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+
+# Misc
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+*.bak
+*.swp
+*~
+
+# Local dumps (don't commit dumped headers)
+GameDump.hpp
