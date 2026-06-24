@@ -23,11 +23,19 @@ You then `#include "GameDump.hpp"` in your own project and call game code by nam
 ## Features
 
 - Dumps every loaded IL2CPP image in one pass.
-- Outputs a single self-contained C++ header, no external runtime needed.
-- Each class becomes a `namespace`, each field/method becomes a `constexpr uint64_t`.
-- C# signatures are emitted as inline comments so the header is also readable docs.
+- Outputs the same dump in **five formats** so you can use whatever language your project is in:
+  - `GameDump.hpp` — C/C++
+  - `GameDump.cs` — C#
+  - `GameDump.rs` — Rust
+  - `GameDump.py` — Python
+  - `GameDump.json` — JSON (for custom tools / scripts)
+- Each class becomes a nested scope (`namespace`, `static class`, `mod`, etc.).
+- C# signatures are emitted as inline comments so the files are also readable docs.
 - Static fields get a `_RVA`, instance fields get an `_Offset`, methods get a `_RVA`.
 - Duplicate identifiers are auto-suffixed (`_2`, `_3`, ...).
+- Method overloads are disambiguated by parameter count (`TakeDamage_1_RVA`, `TakeDamage_2_RVA`, ...).
+- Nested types are dumped recursively inside their parent class namespace.
+- Enum members are dumped as `constexpr int64_t` values.
 - Works on packed / obfuscated games (Themida, VMProtect, metadata encryption, string encryption, ...) because it runs after the protection has decrypted everything in memory.
 - Pure C++20, no third-party dependencies beyond Win32 and the bundled `rrid.hpp` reader.
 
@@ -60,28 +68,37 @@ What it does **not** do:
 
 ## Build
 
-1. Open `Testicle.slnx` in Visual Studio 2022.
+1. Open `IL2CPPDumper.slnx` in Visual Studio 2022.
 2. Set the configuration to **Release | x64**.
 3. Build the solution (`Ctrl+Shift+B`).
 
-Output: `x64\Release\Testicle.dll`.
-
-The output name is `Testicle.dll` because the internal vcxproj is still called `Testicle`. Rename `TargetName` in `Testicle.vcxproj` if you want something else.
+Output: `x64\Release\IL2CPPDumper.dll`.
 
 ## Usage
 
 1. Launch the target game and let it reach the main menu (so IL2CPP is fully initialised).
-2. Inject `Testicle.dll` into the game process. Any injector works:
+2. Inject `IL2CPPDumper.dll` into the game process. Any injector works:
    - Manual map
    - `LoadLibrary` injector
    - Cheat Engine's "Inject DLL"
    - Your own loader
 3. A console window titled **IL2CPP Dumper** pops up and prints progress as each image is dumped.
-4. When it finishes the last line is `[+] wrote <path>`. `GameDump.hpp` is now on your desktop.
+4. When it finishes, a `GameDump` folder appears on your desktop with all output files.
 
-If the desktop path can't be resolved (very rare), the file is written to `C:\GameDump.hpp` instead.
+If the desktop path can't be resolved (very rare), files are written to `C:\GameDump\` instead.
 
-## Example output
+### Output files
+
+| File | Language | Use case |
+|---|---|---|
+| `GameDump.hpp` | C/C++ | `#include` in a native mod / cheat |
+| `GameDump.cs` | C# | Reference in a .NET modding tool |
+| `GameDump.rs` | Rust | `use gamedump::...` in a Rust project |
+| `GameDump.py` | Python | Scripting / automation |
+| `GameDump.json` | JSON | Custom parsers, IDA scripts, etc. |
+| `README.txt` | — | Quick guide to the folder |
+
+## Example output (C++)
 
 ```cpp
 namespace GameDump {
@@ -102,9 +119,9 @@ namespace Assembly_CSharp {
         constexpr uint64_t isDead_Offset    = 0x1C;       // private bool isDead
 
         // methods
-        constexpr uint64_t TakeDamage_RVA   = 0x1C3D4E0;  // public void TakeDamage(int amount)
-        constexpr uint64_t Heal_RVA         = 0x1C3D560;  // public void Heal(int amount)
-        constexpr uint64_t Update_RVA       = 0x1C3D5A0;  // private void Update()
+        constexpr uint64_t TakeDamage_1_RVA = 0x1C3D4E0;  // public void TakeDamage(int amount)
+        constexpr uint64_t Heal_1_RVA       = 0x1C3D560;  // public void Heal(int amount)
+        constexpr uint64_t Update_0_RVA       = 0x1C3D5A0;  // private void Update()
     }
 }
 
@@ -122,8 +139,10 @@ Every numeric constant is one of:
 
 ## Using the dump in your project
 
+### C++
+
 ```cpp
-#include "GameDump.hpp"
+#include "GameDump/GameDump.hpp"
 #include <Windows.h>
 
 const uint64_t base = (uint64_t)GetModuleHandleA("GameAssembly.dll");
@@ -131,7 +150,7 @@ const uint64_t base = (uint64_t)GetModuleHandleA("GameAssembly.dll");
 // Calling a method
 using TakeDamage_t = void(__fastcall*)(void* self, int amount);
 auto TakeDamage = (TakeDamage_t)(base +
-    GameDump::Assembly_CSharp::Game_PlayerController::TakeDamage_RVA);
+    GameDump::Assembly_CSharp::Game_PlayerController::TakeDamage_1_RVA);
 
 TakeDamage(player, 25);
 
@@ -144,16 +163,43 @@ int& maxHp = *(int*)(base +
     GameDump::Assembly_CSharp::Game_PlayerController::maxHealth_RVA);
 ```
 
+### C#
+
+```csharp
+using GameDump;
+
+ulong baseAddr = (ulong)NativeMethods.GetModuleHandle("GameAssembly.dll");
+IntPtr takeDamage = (IntPtr)(baseAddr + Assembly_CSharp.Game_PlayerController.TakeDamage_1_RVA);
+```
+
+### Rust
+
+```rust
+use gamedump::assembly_csharp::game_playercontroller::TAKE_DAMAGE_1_RVA;
+
+let base = get_module_base("GameAssembly.dll");
+let take_damage = base + TAKE_DAMAGE_1_RVA;
+```
+
+### Python
+
+```python
+from GameDump import Assembly_CSharp
+
+base = get_module_base("GameAssembly.dll")
+take_damage = base + Assembly_CSharp.Game_PlayerController.TakeDamage_1_RVA
+```
+
 Re-dump whenever the game updates and your offsets are automatically refreshed.
 
 ## Project layout
 
 ```
 IL2CPP DUMPER/
-├── Testicle.slnx               Visual Studio solution
+├── IL2CPPDumper.slnx               Visual Studio solution
 ├── README.md                   You are here
 └── IL2CPP Dumper/
-    ├── Testicle.vcxproj        DLL project (x64 / x86, Debug / Release)
+    ├── IL2CPPDumper.vcxproj        DLL project (x64 / x86, Debug / Release)
     ├── dllmain.cpp             DLL entry, spawns the dump thread on attach
     ├── dumper.h                Public interface (GameDumper::DumpAll)
     ├── dumper.cpp              Header emitter, writes GameDump.hpp
@@ -164,13 +210,14 @@ IL2CPP DUMPER/
 ## How it works
 
 1. **`DllMain` (DLL_PROCESS_ATTACH)** allocates a console, retitles it, and spawns `DumpThread`.
-2. **`DumpThread`** sleeps for 2 seconds so the game can finish booting IL2CPP, resolves the user's Desktop path with `SHGetFolderPathA`, and calls `GameDumper::DumpAll`.
+2. **`DumpThread`** sleeps for 2 seconds so the game can finish booting IL2CPP, then calls `GameDumper::DumpAll` with `Desktop\GameDump` as the output folder.
 3. **`GameDumper::DumpAll`**:
    - Calls `rrid::init()` to attach to the live IL2CPP runtime inside `GameAssembly.dll`.
-   - Calls `rrid::get_images()` to enumerate every loaded assembly.
-   - For each image, walks classes -> fields -> methods and writes them out as `constexpr uint64_t` constants wrapped in nested namespaces.
-   - Identifier names are sanitized (`SanitizeIdent`) and de-duplicated (`UniqueName`) so the resulting header always compiles.
-   - C# signatures (`BuildSignature`, `BuildFieldSignature`) are emitted as trailing line comments.
+   - Enumerates every loaded assembly, then writes the same metadata to C++, C#, Rust, Python, and JSON.
+   - For each image, walks classes (including nested types) -> fields -> methods and writes them out as `constexpr` constants wrapped in nested namespaces.
+   - Method names include a `_<paramCount>_RVA` suffix so overloads don't collide.
+   - Enum types emit `constexpr int64_t` members instead of field offsets.
+   - Unloads the DLL automatically after a successful dump.
 
 The whole thing is single-threaded, single-pass, and writes straight to disk with `std::ofstream`. A medium-sized game (a few hundred MB of IL2CPP) typically dumps in under a second.
 
@@ -180,9 +227,9 @@ There is no config file. The handful of things you might want to tweak are const
 
 | What | Where |
 |---|---|
-| Target module name (`GameAssembly.dll`) | `rrid.hpp` (`GetModuleBaseAddress` call in `RridImage`) |
+| Target module name (`GameAssembly.dll`) | `rrid.hpp` (`set_module_name` / default in `RridContext`) |
 | Boot delay (default `Sleep(2000)`) | `dllmain.cpp` -> `DumpThread` |
-| Output file path | `dllmain.cpp` -> `DumpThread` (or pass your own to `GameDumper::DumpAll`) |
+| Output folder | `dllmain.cpp` -> `DumpThread` (default: Desktop `GameDump\`) |
 | Pretty type table (`int`, `string`, ...) | `dumper.cpp` -> `PrettyType` |
 
 ## Troubleshooting
@@ -204,11 +251,10 @@ On very big games the header can be tens of MB. Compile it once into its own tra
 
 ## Limitations
 
-- **Module name is hardcoded** to `GameAssembly.dll` in `rrid.hpp`. Change it there if your target uses something else.
+- **Module name defaults to `GameAssembly.dll`.** Change it in `rrid.hpp` or call `rrid::set_module_name()` before `init()` if your target uses something else.
 - **Only RVAs and offsets are emitted.** No method bodies, no generic instantiations, no attributes, no PInvoke metadata beyond the `extern` modifier.
 - **No name demangling.** If the game ships with renamed types (e.g. `<>c__DisplayClass17_0`), that's what you'll get in the dump.
 - **x64 only is tested.** The vcxproj has Win32 configurations but the dumper hasn't been exercised against 32-bit Unity builds in a while.
-- **vcxproj is still called `Testicle`.** Rename it in the project file if it bothers you.
 
 ## Disclaimer
 

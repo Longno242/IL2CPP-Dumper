@@ -55,7 +55,39 @@ inline uint64_t CalculateRVA(uint64_t address, uint64_t moduleBase) {
 }
 
 namespace rrid {
+namespace detail {
+	inline std::string& module_name_storage() {
+		static std::string name = "GameAssembly.dll";
+		return name;
+	}
+
+	inline uint64_t& module_base_storage() {
+		static uint64_t base = 0;
+		return base;
+	}
+
+	inline void invalidate_module_cache() {
+		module_base_storage() = 0;
+	}
+
+	inline uint64_t get_module_base() {
+		auto& base = module_base_storage();
+		if (!base) {
+			base = GetModuleBaseAddress(module_name_storage().c_str());
+		}
+		return base;
+	}
+
+	inline const char* module_name_cstr() {
+		return module_name_storage().c_str();
+	}
+}
+}
+
+namespace rrid {
 	bool init();
+	void set_module_name(const std::string& name);
+	const std::string& get_module_name();
 
 	[[nodiscard]] RridImage* get_image(const std::string& name);
 	[[nodiscard]] const std::vector<RridImage*>& get_images();
@@ -66,7 +98,7 @@ public:
 	RridImage(const std::string& name, const void* image)
 		: name_(name), image_(image) {
 
-		module_base_ = GetModuleBaseAddress("GameAssembly.dll");
+		module_base_ = rrid::detail::get_module_base();
 	}
 
 	inline const std::string& get_name() const { return name_; }
@@ -96,7 +128,7 @@ public:
 	RridClass(const std::string& name, const std::string& namespaze, const void* klass)
 		: name_(name), namespace_(namespaze), class_(klass) {
 
-		module_base_ = GetModuleBaseAddress("GameAssembly.dll");
+		module_base_ = rrid::detail::get_module_base();
 	}
 
 	inline const std::string& get_name() const { return name_; }
@@ -146,7 +178,7 @@ class RridField {
 public:
 	RridField(const std::string& name, const std::string& type, uint64_t offset, uint32_t flags, const void* field)
 		: name_(name), type_(type), offset_(offset), flags_(flags), field_(field) {
-		module_base_ = GetModuleBaseAddress("GameAssembly.dll");
+		module_base_ = rrid::detail::get_module_base();
 
 		if (flags & RRID_FIELD_ATTRIBUTE_STATIC && field) {
 			static_rva_ = CalculateRVA((uint64_t)field, module_base_);
@@ -190,7 +222,7 @@ class RridMethod {
 public:
 	RridMethod(const std::string& name, const std::string& return_type, const std::vector<std::pair<std::string, std::string>>& params, uint32_t flags, void* address, const void* method)
 		: name_(name), return_type_(return_type), flags_(flags), params_(params), address_(address), method_(method) {
-		module_base_ = GetModuleBaseAddress("GameAssembly.dll");
+		module_base_ = rrid::detail::get_module_base();
 
 		if (address) {
 			method_rva_ = CalculateRVA((uint64_t)address, module_base_);
@@ -239,6 +271,8 @@ namespace rrid {
 		struct RridContext {
 			void* jmp_rdx = nullptr;
 			bool initialized = false;
+			std::string module_name = "GameAssembly.dll";
+			uint64_t module_base = 0;
 
 			uint32_t method_pointer_offset = 0;
 
@@ -378,8 +412,8 @@ namespace rrid {
 				auto& ctx = get_context();
 
 
-				ctx.api.domain_get = (decltype(ctx.api.domain_get))pattern::find_pattern("GameAssembly.dll", "\x48\x83\xEC\x00\x48\x63\x05\x00\x00\x00\x00\x48\x8D\x0D\x00\x00\x00\x00\x4C\x8B\x05\x00\x00\x00\x00\x48\x8D\x15\x00\x00\x00\x00\x8B\x0C\x08\x48\x8B\x44\x24\x00\x48\xC1\xE1\x00\x48\x03\xCA\x48\x3B\xC1\x73\x00\x48\x8B\x44\x24\x00\x48\x3B\xC2\x73\x00\x49\x63\x40\x00\x42\x8B\x4C\x00\x00\x48\x8B\x44\x24\x00\x49\x8D\x14\x88\x48\x3B\xC2\x0F\x83", "xxx?xxx????xxx????xxx????xxx????xxxxxxx?xxx?xxxxxxx?xxxx?xxxx?xxx?xxxx?xxxx?xxxxxxxxx");
-				ctx.api.thread_attach = (decltype(ctx.api.thread_attach))pattern::find_pattern("GameAssembly.dll", "\x40\x56\x48\x83\xEC\x00\x48\x8B\xF1\x48\x8B\x0D\x00\x00\x00\x00\x8B\x09", "xxxxx?xxxxxx????xx");
+				ctx.api.domain_get = (decltype(ctx.api.domain_get))pattern::find_pattern(::rrid::detail::module_name_cstr(), "\x48\x83\xEC\x00\x48\x63\x05\x00\x00\x00\x00\x48\x8D\x0D\x00\x00\x00\x00\x4C\x8B\x05\x00\x00\x00\x00\x48\x8D\x15\x00\x00\x00\x00\x8B\x0C\x08\x48\x8B\x44\x24\x00\x48\xC1\xE1\x00\x48\x03\xCA\x48\x3B\xC1\x73\x00\x48\x8B\x44\x24\x00\x48\x3B\xC2\x73\x00\x49\x63\x40\x00\x42\x8B\x4C\x00\x00\x48\x8B\x44\x24\x00\x49\x8D\x14\x88\x48\x3B\xC2\x0F\x83", "xxx?xxx????xxx????xxx????xxx????xxxxxxx?xxx?xxxxxxx?xxxx?xxxx?xxx?xxxx?xxxx?xxxxxxxxx");
+				ctx.api.thread_attach = (decltype(ctx.api.thread_attach))pattern::find_pattern(::rrid::detail::module_name_cstr(), "\x40\x56\x48\x83\xEC\x00\x48\x8B\xF1\x48\x8B\x0D\x00\x00\x00\x00\x8B\x09", "xxxxx?xxxxxx????xx");
 				ctx.api.get_assemblies = (decltype(ctx.api.get_assemblies))detail::find_api_function("il2cpp_domain_get_assemblies");
 				ctx.api.get_image = (decltype(ctx.api.get_image))detail::find_api_function("il2cpp_assembly_get_image");
 				ctx.api.get_image_name = (decltype(ctx.api.get_image_name))detail::find_api_function("il2cpp_image_get_name");
@@ -410,9 +444,9 @@ namespace rrid {
 				ctx.api.is_method_instance = (decltype(ctx.api.is_method_instance))detail::find_api_function("il2cpp_method_is_instance");
 				ctx.api.get_class_nested_types = (decltype(ctx.api.get_class_nested_types))detail::find_api_function("il2cpp_class_get_nested_types");
 
-				void* address = pattern::find_pattern("GameAssembly.dll", "\xF3\x0F\x11\x4C\x24\x00\x4C\x8B\xDC\x48\x81\xEC\x00\x00\x00\x00\x49\x8D\x43\x00\x49\x89\x4B", "xxxxx?xxxxxx????xxx?xxx");
+				void* address = pattern::find_pattern(::rrid::detail::module_name_cstr(), "\xF3\x0F\x11\x4C\x24\x00\x4C\x8B\xDC\x48\x81\xEC\x00\x00\x00\x00\x49\x8D\x43\x00\x49\x89\x4B", "xxxxx?xxxxxx????xxx?xxx");
 				if (!address) {
-					address = pattern::find_pattern("GameAssembly.dll", "\xF3\x0F\x11\x54\x24\x00\xF3\x0F\x11\x4C\x24\x00\x4C\x8B\xDC\x48\x83\xEC\x00\x49\x89\x4B\x00\x49\x8B\xC1\x49\x8D\x4B\x00\x49\xC7\x43\x00\x00\x00\x00\x00\x49\x89\x4B\x00\x4D\x8D\x4B\x00\x49\x8D\x4B\x00\x45\x33\xC0\x49\x89\x4B\x00\x48\x8B\xD0\x48\x8B\x48", "xxxxx?xxxxx?xxxxxx?xxx?xxxxxx?xxx?????xxx?xxx?xxx?xxxxxx?xxxxxx");
+					address = pattern::find_pattern(::rrid::detail::module_name_cstr(), "\xF3\x0F\x11\x54\x24\x00\xF3\x0F\x11\x4C\x24\x00\x4C\x8B\xDC\x48\x83\xEC\x00\x49\x89\x4B\x00\x49\x8B\xC1\x49\x8D\x4B\x00\x49\xC7\x43\x00\x00\x00\x00\x00\x49\x89\x4B\x00\x4D\x8D\x4B\x00\x49\x8D\x4B\x00\x45\x33\xC0\x49\x89\x4B\x00\x48\x8B\xD0\x48\x8B\x48", "xxxxx?xxxxx?xxxxxx?xxx?xxxxxx?xxx?????xxx?xxx?xxx?xxxxxx?xxxxxx");
 				}
 
 				if (address) {
@@ -590,6 +624,21 @@ namespace rrid {
 	}
 }
 
+inline void rrid::set_module_name(const std::string& name) {
+	auto& ctx = detail::get_context();
+	if (ctx.initialized) {
+		return;
+	}
+	detail::module_name_storage() = name.empty() ? "GameAssembly.dll" : name;
+	detail::invalidate_module_cache();
+	ctx.module_name = detail::module_name_storage();
+	ctx.module_base = 0;
+}
+
+inline const std::string& rrid::get_module_name() {
+	return detail::module_name_storage();
+}
+
 inline bool rrid::init() {
 	auto& ctx = detail::get_context();
 	if (ctx.initialized) {
@@ -600,7 +649,7 @@ inline bool rrid::init() {
 		return false;
 	}
 
-	ctx.jmp_rdx = detail::pattern::find_pattern("GameAssembly.dll", "\xFF\x27", "xx");
+	ctx.jmp_rdx = detail::pattern::find_pattern(::rrid::detail::module_name_cstr(), "\xFF\x27", "xx");
 	if (!ctx.jmp_rdx) {
 		return false;
 	}

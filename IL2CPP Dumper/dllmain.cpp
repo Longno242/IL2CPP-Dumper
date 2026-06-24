@@ -5,25 +5,33 @@
 #include <cstdio>
 #include "dumper.h"
 
+static HMODULE g_hModule = nullptr;
+
 static DWORD WINAPI DumpThread(LPVOID) {
-    Sleep(2000); // let il2cpp finish booting
+    Sleep(2000);
 
     char desktop[MAX_PATH] = {};
     HRESULT hr = SHGetFolderPathA(nullptr, CSIDL_DESKTOP, nullptr, SHGFP_TYPE_CURRENT, desktop);
 
-    std::string path = SUCCEEDED(hr)
-        ? std::string(desktop) + "\\GameDump.hpp"
-        : "C:\\GameDump.hpp";
+    std::string dir = SUCCEEDED(hr)
+        ? std::string(desktop) + "\\GameDump"
+        : "C:\\GameDump";
 
-    GameDumper::DumpAll(path, [](const std::string& msg) {
+    const bool ok = GameDumper::DumpAll(dir, [](const std::string& msg) {
         printf("%s\n", msg.c_str());
     });
+
+    if (ok) {
+        printf("[*] unloading\n");
+        FreeLibraryAndExitThread(g_hModule, 0);
+    }
 
     return 0;
 }
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
+        g_hModule = hModule;
         DisableThreadLibraryCalls(hModule);
         AllocConsole();
         FILE* fp = nullptr;
