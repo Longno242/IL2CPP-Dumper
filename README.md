@@ -1,6 +1,6 @@
 # IL2CPP Dumper
 
-A runtime dumper for Unity games built with IL2CPP. Inject the DLL, it reads the live IL2CPP metadata out of the process, and writes a single `GameDump.hpp` to your desktop containing every image, class, field and method with its RVA / offset and a C# signature.
+A runtime dumper for Unity games built with IL2CPP. Inject the DLL, it reads the live IL2CPP metadata out of the process, and writes a `GameDump` folder to your desktop with every image, class, field and method — RVAs, offsets, inheritance info, and C# signatures.
 
 You then `#include "GameDump.hpp"` in your own project and call game code by name instead of hunting AOBs or rebuilding offsets every patch.
 
@@ -29,13 +29,18 @@ You then `#include "GameDump.hpp"` in your own project and call game code by nam
   - `GameDump.rs` — Rust
   - `GameDump.py` — Python
   - `GameDump.json` — JSON (for custom tools / scripts)
+- **`Index.json`** — flat search index mapping full type/method names to symbol paths and RVAs.
+- **`images/`** — per-assembly C++ headers for faster compiles on large games.
 - Each class becomes a nested scope (`namespace`, `static class`, `mod`, etc.).
 - C# signatures are emitted as inline comments so the files are also readable docs.
 - Static fields get a `_RVA`, instance fields get an `_Offset`, methods get a `_RVA`.
+- **MethodInfo RVA** emitted alongside method code RVAs (for hooking frameworks).
+- **Inheritance metadata** — parent class, interfaces, and generic flag in comments and JSON.
 - Duplicate identifiers are auto-suffixed (`_2`, `_3`, ...).
-- Method overloads are disambiguated by parameter count (`TakeDamage_1_RVA`, `TakeDamage_2_RVA`, ...).
+- Method overloads are disambiguated by **parameter types** (`TakeDamage_int_RVA`, `TakeDamage_string_int_RVA`, ...).
 - Nested types are dumped recursively inside their parent class namespace.
 - Enum members are dumped as `constexpr int64_t` values.
+- **Robust IL2CPP init** — polls until ready (up to 60 s), resolves APIs via exports + pattern scan, auto-fallback return spoofer (legacy / v2 / direct).
 - Works on packed / obfuscated games (Themida, VMProtect, metadata encryption, string encryption, ...) because it runs after the protection has decrypted everything in memory.
 - Pure C++20, no third-party dependencies beyond Win32 and the bundled `rrid.hpp` reader.
 
@@ -74,6 +79,8 @@ What it does **not** do:
 
 Output: `x64\Release\IL2CPPDumper.dll`.
 
+Pre-built binaries are attached to each [GitHub release](https://github.com/Longno242/IL2CPP-Dumper/releases).
+
 ## Usage
 
 1. Launch the target game and let it reach the main menu (so IL2CPP is fully initialised).
@@ -96,6 +103,8 @@ If the desktop path can't be resolved (very rare), files are written to `C:\Game
 | `GameDump.rs` | Rust | `use gamedump::...` in a Rust project |
 | `GameDump.py` | Python | Scripting / automation |
 | `GameDump.json` | JSON | Custom parsers, IDA scripts, etc. |
+| `Index.json` | JSON | Flat search index (grep-friendly lookup) |
+| `images/*.hpp` | C/C++ | Per-assembly headers (smaller compile units) |
 | `README.txt` | — | Quick guide to the folder |
 
 ## Example output (C++)
@@ -109,7 +118,7 @@ namespace Assembly_CSharp {
     constexpr uint64_t ModuleBase = 0x7FF6XXXXXXXX;
     constexpr uint64_t ImageRVA   = 0x1234567;
 
-    // class Game.PlayerController  (ClassRVA 0x1ABCDE0)
+    // class Game.PlayerController  (ClassRVA 0x1ABCDE0)  extends UnityEngine.MonoBehaviour
     namespace Game_PlayerController {
         constexpr uint64_t ClassRVA = 0x1ABCDE0;
 
@@ -119,9 +128,10 @@ namespace Assembly_CSharp {
         constexpr uint64_t isDead_Offset    = 0x1C;       // private bool isDead
 
         // methods
-        constexpr uint64_t TakeDamage_1_RVA = 0x1C3D4E0;  // public void TakeDamage(int amount)
-        constexpr uint64_t Heal_1_RVA       = 0x1C3D560;  // public void Heal(int amount)
-        constexpr uint64_t Update_0_RVA       = 0x1C3D5A0;  // private void Update()
+        constexpr uint64_t TakeDamage_int_RVA = 0x1C3D4E0;  // public void TakeDamage(int amount)
+        constexpr uint64_t TakeDamage_int_RVA_MethodInfo = 0x1C3D000;
+        constexpr uint64_t Heal_int_RVA       = 0x1C3D560;  // public void Heal(int amount)
+        constexpr uint64_t Update_0_RVA         = 0x1C3D5A0;  // private void Update()
     }
 }
 
@@ -133,6 +143,7 @@ Every numeric constant is one of:
 | Suffix | What it is | Add to |
 |---|---|---|
 | `_RVA` (method) | Method address offset | `GetModuleHandleA("GameAssembly.dll")` |
+| `_MethodInfo` | `Il2CppMethodInfo*` offset | `GetModuleHandleA("GameAssembly.dll")` |
 | `_RVA` (static field) | Static field address offset | `GetModuleHandleA("GameAssembly.dll")` |
 | `_Offset` | Instance field offset | The object instance pointer |
 | `ClassRVA` | IL2CPP `Il2CppClass*` address | `GetModuleHandleA("GameAssembly.dll")` |
@@ -150,7 +161,7 @@ const uint64_t base = (uint64_t)GetModuleHandleA("GameAssembly.dll");
 // Calling a method
 using TakeDamage_t = void(__fastcall*)(void* self, int amount);
 auto TakeDamage = (TakeDamage_t)(base +
-    GameDump::Assembly_CSharp::Game_PlayerController::TakeDamage_1_RVA);
+    GameDump::Assembly_CSharp::Game_PlayerController::TakeDamage_int_RVA);
 
 TakeDamage(player, 25);
 
@@ -163,22 +174,28 @@ int& maxHp = *(int*)(base +
     GameDump::Assembly_CSharp::Game_PlayerController::maxHealth_RVA);
 ```
 
+For large games, include only the assembly you need:
+
+```cpp
+#include "GameDump/images/Assembly-CSharp.hpp"
+```
+
 ### C#
 
 ```csharp
 using GameDump;
 
 ulong baseAddr = (ulong)NativeMethods.GetModuleHandle("GameAssembly.dll");
-IntPtr takeDamage = (IntPtr)(baseAddr + Assembly_CSharp.Game_PlayerController.TakeDamage_1_RVA);
+IntPtr takeDamage = (IntPtr)(baseAddr + Assembly_CSharp.Game_PlayerController.TakeDamage_int_RVA);
 ```
 
 ### Rust
 
 ```rust
-use gamedump::assembly_csharp::game_playercontroller::TAKE_DAMAGE_1_RVA;
+use gamedump::assembly_csharp::game_playercontroller::TAKE_DAMAGE_INT_RVA;
 
 let base = get_module_base("GameAssembly.dll");
-let take_damage = base + TAKE_DAMAGE_1_RVA;
+let take_damage = base + TAKE_DAMAGE_INT_RVA;
 ```
 
 ### Python
@@ -187,7 +204,7 @@ let take_damage = base + TAKE_DAMAGE_1_RVA;
 from GameDump import Assembly_CSharp
 
 base = get_module_base("GameAssembly.dll")
-take_damage = base + Assembly_CSharp.Game_PlayerController.TakeDamage_1_RVA
+take_damage = base + Assembly_CSharp.Game_PlayerController.TakeDamage_int_RVA
 ```
 
 Re-dump whenever the game updates and your offsets are automatically refreshed.
@@ -195,27 +212,29 @@ Re-dump whenever the game updates and your offsets are automatically refreshed.
 ## Project layout
 
 ```
-IL2CPP DUMPER/
-├── IL2CPPDumper.slnx               Visual Studio solution
-├── README.md                   You are here
+IL2CPP-Dumper/
+├── IL2CPPDumper.slnx          Visual Studio solution
+├── README.md                  You are here
 └── IL2CPP Dumper/
-    ├── IL2CPPDumper.vcxproj        DLL project (x64 / x86, Debug / Release)
-    ├── dllmain.cpp             DLL entry, spawns the dump thread on attach
-    ├── dumper.h                Public interface (GameDumper::DumpAll)
-    ├── dumper.cpp              Header emitter, writes GameDump.hpp
-    ├── rrid.hpp                IL2CPP metadata reader (images, classes, fields, methods)
-    └── framework.h             Standard Win32 framework header
+    ├── IL2CPPDumper.vcxproj   DLL project (x64 / x86, Debug / Release)
+    ├── dllmain.cpp            DLL entry, spawns the dump thread on attach
+    ├── dumper.h               Public interface (GameDumper::DumpAll)
+    ├── dumper.cpp             Multi-format emitter (C++, C#, Rust, Python, JSON, Index)
+    ├── rrid.hpp                 IL2CPP metadata reader + return spoofer
+    └── framework.h            Standard Win32 framework header
 ```
 
 ## How it works
 
 1. **`DllMain` (DLL_PROCESS_ATTACH)** allocates a console, retitles it, and spawns `DumpThread`.
-2. **`DumpThread`** sleeps for 2 seconds so the game can finish booting IL2CPP, then calls `GameDumper::DumpAll` with `Desktop\GameDump` as the output folder.
+2. **`DumpThread`** calls `GameDumper::DumpAll` with `Desktop\GameDump` as the output folder.
 3. **`GameDumper::DumpAll`**:
-   - Calls `rrid::init()` to attach to the live IL2CPP runtime inside `GameAssembly.dll`.
-   - Enumerates every loaded assembly, then writes the same metadata to C++, C#, Rust, Python, and JSON.
-   - For each image, walks classes (including nested types) -> fields -> methods and writes them out as `constexpr` constants wrapped in nested namespaces.
-   - Method names include a `_<paramCount>_RVA` suffix so overloads don't collide.
+   - Polls `rrid::init()` until IL2CPP is ready (up to 60 s).
+   - Resolves IL2CPP APIs via `GetProcAddress` exports, with UnityPlayer pattern-scan fallback.
+   - Selects a return-address spoofer automatically (legacy → v2 → direct call).
+   - Enumerates every loaded assembly, then writes metadata to C++, C#, Rust, Python, JSON, Index, and per-image headers.
+   - For each image, walks classes (including nested types) → fields → methods and writes them out as constants wrapped in nested namespaces.
+   - Method names include parameter types so overloads don't collide.
    - Enum types emit `constexpr int64_t` members instead of field offsets.
    - Unloads the DLL automatically after a successful dump.
 
@@ -228,17 +247,23 @@ There is no config file. The handful of things you might want to tweak are const
 | What | Where |
 |---|---|
 | Target module name (`GameAssembly.dll`) | `rrid.hpp` (`set_module_name` / default in `RridContext`) |
-| Boot delay (default `Sleep(2000)`) | `dllmain.cpp` -> `DumpThread` |
-| Output folder | `dllmain.cpp` -> `DumpThread` (default: Desktop `GameDump\`) |
-| Pretty type table (`int`, `string`, ...) | `dumper.cpp` -> `PrettyType` |
+| Init retry count / interval | `dumper.cpp` → `DumpAll` (default 120 × 500 ms) |
+| Output folder | `dllmain.cpp` → `DumpThread` (default: Desktop `GameDump\`) |
+| Pretty type table (`int`, `string`, ...) | `dumper.cpp` → `PrettyType` |
 
 ## Troubleshooting
 
 **Console opens but no file is written.**
-The dumper probably crashed inside `rrid::init()` because IL2CPP wasn't ready yet. Bump the `Sleep(2000)` in `dllmain.cpp` to `5000` or `10000` and rebuild.
+Wait until the game reaches the main menu before injecting. The dumper polls for up to 60 seconds — if it still fails, check the error line printed in the console.
 
-**`[!] rrid::init failed`.**
-Either `GameAssembly.dll` isn't loaded yet, or the IL2CPP version inside the game is one `rrid.hpp` doesn't know how to parse. Verify with a debugger that `GameAssembly.dll` is loaded at the moment the dumper runs.
+**`[!] rrid::init failed: ...`**
+The console now prints the exact failure reason, for example:
+- `GameAssembly.dll is not loaded` — inject later, or call `rrid::set_module_name()` if your target uses a different module name.
+- `missing API: il2cpp_...` — IL2CPP version not supported yet; open an issue with the game name and Unity version.
+- `return spoofer probe failed` — APIs resolved but calls failed; try injecting at main menu.
+- `no IL2CPP assemblies loaded yet` — IL2CPP isn't fully initialised; wait longer before injecting.
+
+The console also reports whether `GameAssembly.dll` and `UnityPlayer.dll` are loaded.
 
 **DLL won't inject.**
 That has nothing to do with the dumper, it's your injector vs the game's anti-injection. Try a manual-map injector.
@@ -247,7 +272,7 @@ That has nothing to do with the dumper, it's your injector vs the game's anti-in
 That's expected. IL2CPP keeps compiler-generated names (lambdas, async state machines, ...) and they collide. The `_2`, `_3`, ... suffixes guarantee a valid, unique C++ identifier per scope.
 
 **Compiler complains about `GameDump.hpp` being too large.**
-On very big games the header can be tens of MB. Compile it once into its own translation unit and let LTCG sort it out, or split it per image.
+Use the per-assembly headers in `images/` instead of the monolithic `GameDump.hpp`, or compile the dump once into its own translation unit.
 
 ## Limitations
 

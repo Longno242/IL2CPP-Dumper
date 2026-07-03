@@ -185,10 +185,6 @@ namespace {
         return candidate;
     }
 
-    std::string MethodIdentBase(RridMethod* m) {
-        return SanitizeIdent(m->get_name()) + "_" + std::to_string(m->get_param_count()) + "_RVA";
-    }
-
     std::string ClassIdent(RridClass* cls) {
         const std::string ns = cls->get_namespace();
         const std::string cname = cls->get_name();
@@ -201,19 +197,112 @@ namespace {
         return ns.empty() ? cname : (ns + "." + cname);
     }
 
+    std::string MethodIdentBase(RridMethod* m) {
+        std::string base = SanitizeIdent(m->get_name());
+        if (m->get_param_count() == 0) {
+            base += "_0";
+        }
+        for (const auto& param : m->get_params()) {
+            base += "_" + SanitizeIdent(PrettyType(param.first));
+        }
+        return base + "_RVA";
+    }
+
+    std::string ClassKindLine(RridClass* cls) {
+        const std::string parent = cls->get_parent_full_name();
+        const auto& ifaces = cls->get_interface_full_names();
+
+        std::ostringstream os;
+        os << (cls->is_enum() ? "enum" : (cls->is_valuetype() ? "struct" : "class"))
+           << " " << ClassFullName(cls)
+           << "  (ClassRVA " << Hex(cls->get_class_rva()) << ")";
+        if (!parent.empty()) {
+            os << "  extends " << parent;
+        }
+        if (!ifaces.empty()) {
+            os << "  implements ";
+            for (size_t i = 0; i < ifaces.size(); ++i) {
+                if (i) os << ", ";
+                os << ifaces[i];
+            }
+        }
+        if (cls->is_generic()) {
+            os << "  [generic]";
+        }
+        return os.str();
+    }
+
+    struct IndexEntry {
+        std::string kind;
+        std::string fullName;
+        std::string symbol;
+        std::string image;
+        std::string signature;
+        uint64_t rva = 0;
+        uint64_t offset = 0;
+        uint64_t methodInfoRva = 0;
+    };
+
+    struct IndexCollector {
+        std::vector<IndexEntry> entries;
+
+        void add_method(const std::string& image, const std::string& classFullName,
+                        const std::string& classPath, RridMethod* m, const std::string& symbol) {
+            IndexEntry e;
+            e.kind = "method";
+            e.fullName = classFullName + "." + m->get_name();
+            e.symbol = classPath + "::" + symbol;
+            e.image = image;
+            e.signature = BuildSignature(m);
+            e.rva = m->get_method_rva();
+            e.methodInfoRva = m->get_method_info_rva();
+            entries.push_back(std::move(e));
+        }
+
+        void add_field(const std::string& image, const std::string& classFullName,
+                       const std::string& classPath, RridField* f, const std::string& symbol, bool isStatic) {
+            IndexEntry e;
+            e.kind = isStatic ? "staticField" : "instanceField";
+            e.fullName = classFullName + "." + f->get_name();
+            e.symbol = classPath + "::" + symbol;
+            e.image = image;
+            e.signature = BuildFieldSignature(f);
+            if (isStatic) {
+                e.rva = f->get_static_rva();
+            } else {
+                e.offset = f->get_offset();
+            }
+            entries.push_back(std::move(e));
+        }
+
+        void add_class(const std::string& image, const std::string& classFullName,
+                       const std::string& classPath, RridClass* cls) {
+            IndexEntry e;
+            e.kind = "class";
+            e.fullName = classFullName;
+            e.symbol = classPath + "::ClassRVA";
+            e.image = image;
+            e.rva = cls->get_class_rva();
+            entries.push_back(std::move(e));
+        }
+    };
+
     // ---- C++ ----
 
-    void WriteClassCpp(std::ostream& out, RridClass* cls, int indent) {
+    void WriteClassCpp(std::ostream& out, RridClass* cls, int indent,
+                       const std::string& imageName, const std::string& classPath,
+                       IndexCollector* index) {
         const std::string pad   = Indent(indent);
         const std::string inner = Indent(indent + 1);
         const bool is_enum      = cls->is_enum();
+        const std::string full  = ClassFullName(cls);
+        const std::string path  = classPath.empty() ? ClassIdent(cls) : (classPath + "::" + ClassIdent(cls));
 
-        const char* kind = "class";
-        if (is_enum)                  kind = "enum";
-        else if (cls->is_valuetype()) kind = "struct";
+        if (index) {
+            index->add_class(imageName, full, path, cls);
+        }
 
-        out << pad << "// " << kind << " " << ClassFullName(cls)
-            << "  (ClassRVA " << Hex(cls->get_class_rva()) << ")\n";
+        out << pad << "// " << ClassKindLine(cls) << "\n";
         out << pad << "namespace " << ClassIdent(cls) << " {\n";
         out << inner << "constexpr uint64_t ClassRVA = " << Hex(cls->get_class_rva()) << ";\n";
 
@@ -237,6 +326,9 @@ namespace {
                     const uint64_t    value     = is_static ? f->get_static_rva() : f->get_offset();
                     out << inner << "constexpr uint64_t " << ident
                         << " = " << Hex(value) << "; // " << BuildFieldSignature(f) << "\n";
+                    if (index) {
+                        index->add_field(imageName, full, path, f, ident, is_static);
+                    }
                 }
             }
         }
@@ -249,6 +341,13 @@ namespace {
                 const std::string ident = UniqueName(used, MethodIdentBase(m));
                 out << inner << "constexpr uint64_t " << ident
                     << " = " << Hex(m->get_method_rva()) << "; // " << BuildSignature(m) << "\n";
+                if (m->get_method_info_rva()) {
+                    out << inner << "constexpr uint64_t " << ident << "_MethodInfo"
+                        << " = " << Hex(m->get_method_info_rva()) << "; // MethodInfo for " << m->get_name() << "\n";
+                }
+                if (index) {
+                    index->add_method(imageName, full, path, m, ident);
+                }
             }
         }
 
@@ -257,14 +356,14 @@ namespace {
             out << "\n" << inner << "// nested types\n";
             for (auto* nested_cls : nested) {
                 out << "\n";
-                WriteClassCpp(out, nested_cls, indent + 1);
+                WriteClassCpp(out, nested_cls, indent + 1, imageName, path, index);
             }
         }
 
         out << pad << "}\n\n";
     }
 
-    void WriteImageCpp(std::ostream& out, RridImage* img, int indent = 0) {
+    void WriteImageCpp(std::ostream& out, RridImage* img, int indent, IndexCollector* index) {
         const std::string pad = Indent(indent);
         out << pad << "// ==== image: " << img->get_name()
             << "   ModuleBase " << Hex(img->get_module_base())
@@ -274,7 +373,7 @@ namespace {
         out << pad << "    constexpr uint64_t ModuleBase = " << Hex(img->get_module_base()) << ";\n";
         out << pad << "    constexpr uint64_t ImageRVA   = " << Hex(img->get_image_rva())   << ";\n\n";
         for (auto* cls : img->get_classes()) {
-            WriteClassCpp(out, cls, indent + 1);
+            WriteClassCpp(out, cls, indent + 1, img->get_name(), SanitizeIdent(img->get_name()), index);
         }
         out << pad << "} // " << img_ident << "\n\n";
     }
@@ -286,8 +385,7 @@ namespace {
         const std::string inner = Indent(indent + 1);
         const bool is_enum      = cls->is_enum();
 
-        out << pad << "// " << (is_enum ? "enum" : "class") << " " << ClassFullName(cls)
-            << "  (ClassRVA " << Hex(cls->get_class_rva()) << ")\n";
+        out << pad << "// " << ClassKindLine(cls) << "\n";
         out << pad << "public static class " << ClassIdent(cls) << "\n" << pad << "{\n";
         out << inner << "public const ulong ClassRVA = " << Hex(cls->get_class_rva()) << ";\n";
 
@@ -323,6 +421,10 @@ namespace {
                 const std::string ident = UniqueName(used, MethodIdentBase(m));
                 out << inner << "public const ulong " << ident
                     << " = " << Hex(m->get_method_rva()) << "; // " << BuildSignature(m) << "\n";
+                if (m->get_method_info_rva()) {
+                    out << inner << "public const ulong " << ident << "_MethodInfo"
+                        << " = " << Hex(m->get_method_info_rva()) << ";\n";
+                }
             }
         }
 
@@ -519,6 +621,23 @@ namespace {
         out << inner << "\"kind\": \"" << (is_enum ? "enum" : (cls->is_valuetype() ? "struct" : "class")) << "\",\n";
         out << inner << "\"classRva\": " << HexJson(cls->get_class_rva()) << ",\n";
 
+        const std::string parent = cls->get_parent_full_name();
+        if (!parent.empty()) {
+            out << inner << "\"parent\": \"" << JsonEscape(parent) << "\",\n";
+        }
+        const auto& ifaces = cls->get_interface_full_names();
+        if (!ifaces.empty()) {
+            out << inner << "\"interfaces\": [";
+            for (size_t i = 0; i < ifaces.size(); ++i) {
+                if (i) out << ", ";
+                out << "\"" << JsonEscape(ifaces[i]) << "\"";
+            }
+            out << "],\n";
+        }
+        if (cls->is_generic()) {
+            out << inner << "\"isGeneric\": true,\n";
+        }
+
         out << inner << "\"fields\": [";
         auto fields = cls->get_fields();
         bool first_field = true;
@@ -552,6 +671,9 @@ namespace {
             out << "\"name\": \"" << JsonEscape(m->get_name()) << "\", ";
             out << "\"paramCount\": " << m->get_param_count() << ", ";
             out << "\"rva\": " << HexJson(m->get_method_rva()) << ", ";
+            if (m->get_method_info_rva()) {
+                out << "\"methodInfoRva\": " << HexJson(m->get_method_info_rva()) << ", ";
+            }
             out << "\"signature\": \"" << JsonEscape(BuildSignature(m)) << "\"}";
         }
         if (!methods.empty()) out << "\n" << inner;
@@ -621,6 +743,7 @@ namespace {
         out << "{\n";
         out << "  \"timestamp\": \"" << JsonEscape(CurrentTimestamp()) << "\",\n";
         out << "  \"module\": \"" << JsonEscape(rrid::get_module_name()) << "\",\n";
+        out << "  \"spooferBackend\": \"" << JsonEscape(rrid::get_spoofer_backend()) << "\",\n";
         out << "  \"images\": [";
 
         bool first_image = true;
@@ -631,6 +754,69 @@ namespace {
         if (!images.empty()) out << "\n  ";
         out << "]\n}\n";
         out.close();
+        return true;
+    }
+
+    bool WriteIndexJson(const std::filesystem::path& path, const IndexCollector& index) {
+        std::ofstream out(path);
+        if (!out.is_open()) {
+            return false;
+        }
+
+        out << "{\n";
+        out << "  \"timestamp\": \"" << JsonEscape(CurrentTimestamp()) << "\",\n";
+        out << "  \"module\": \"" << JsonEscape(rrid::get_module_name()) << "\",\n";
+        out << "  \"spooferBackend\": \"" << JsonEscape(rrid::get_spoofer_backend()) << "\",\n";
+        out << "  \"entries\": [";
+
+        for (size_t i = 0; i < index.entries.size(); ++i) {
+            const auto& e = index.entries[i];
+            if (i) out << ',';
+            out << "\n    {";
+            out << "\"kind\": \"" << JsonEscape(e.kind) << "\", ";
+            out << "\"fullName\": \"" << JsonEscape(e.fullName) << "\", ";
+            out << "\"symbol\": \"" << JsonEscape(e.symbol) << "\", ";
+            out << "\"image\": \"" << JsonEscape(e.image) << "\"";
+            if (!e.signature.empty()) {
+                out << ", \"signature\": \"" << JsonEscape(e.signature) << "\"";
+            }
+            if (e.rva) {
+                out << ", \"rva\": " << HexJson(e.rva);
+            }
+            if (e.offset) {
+                out << ", \"offset\": " << HexJson(e.offset);
+            }
+            if (e.methodInfoRva) {
+                out << ", \"methodInfoRva\": " << HexJson(e.methodInfoRva);
+            }
+            out << "}";
+        }
+
+        if (!index.entries.empty()) out << "\n  ";
+        out << "]\n}\n";
+        out.close();
+        return true;
+    }
+
+    bool WritePerImageHeaders(const std::filesystem::path& images_dir,
+                              const std::vector<RridImage*>& images) {
+        std::error_code ec;
+        std::filesystem::create_directories(images_dir, ec);
+
+        for (auto* img : images) {
+            const auto path = images_dir / (SanitizeIdent(img->get_name()) + ".hpp");
+            std::ofstream out(path);
+            if (!out.is_open()) {
+                return false;
+            }
+            out << "// IL2CPP dump - " << CurrentTimestamp() << "\n";
+            out << "// image: " << img->get_name() << "\n";
+            out << "#pragma once\n#include <cstdint>\n\n";
+            out << "namespace GameDump {\n\n";
+            WriteImageCpp(out, img, 0, nullptr);
+            out << "} // GameDump\n";
+            out.close();
+        }
         return true;
     }
 
@@ -649,7 +835,9 @@ namespace {
         out << "  GameDump.cs   - C#      (reference in your mod / tool project)\n";
         out << "  GameDump.rs   - Rust    (pub const values in nested modules)\n";
         out << "  GameDump.py   - Python  (class attributes for scripting)\n";
-        out << "  GameDump.json - JSON    (for tools, scripts, or custom parsers)\n\n";
+        out << "  GameDump.json - JSON    (for tools, scripts, or custom parsers)\n";
+        out << "  Index.json    - flat search index (methods, fields, classes)\n";
+        out << "  images/       - per-assembly C++ headers (smaller compile units)\n\n";
         out << "Suffix guide:\n";
         out << "  *_RVA on methods/static fields = offset from GameAssembly.dll base\n";
         out << "  *_Offset on instance fields    = offset from the object pointer\n";
@@ -663,14 +851,31 @@ bool GameDumper::DumpAll(const std::string& output_dir,
 
     auto log = [&](const std::string& msg) {
         if (logCallback) logCallback(msg);
-        std::cout << msg << std::endl;
+        else std::cout << msg << std::endl;
     };
 
-    if (!rrid::init()) {
-        log("[!] rrid::init failed");
+    bool ready = false;
+    std::string last_error;
+    for (int attempt = 0; attempt < 120; ++attempt) {
+        if (attempt > 0) {
+            if (attempt % 10 == 0) {
+                log("[*] waiting for IL2CPP (" + std::to_string(attempt + 1) + "/120): " + last_error);
+            }
+            Sleep(500);
+        }
+        if (rrid::init()) {
+            ready = true;
+            break;
+        }
+        last_error = rrid::get_init_error();
+    }
+    if (!ready) {
+        log("[!] rrid::init failed: " + last_error);
+        log("[!] GameAssembly loaded: " + std::string(GetModuleHandleA("GameAssembly.dll") ? "yes" : "no"));
+        log("[!] UnityPlayer loaded: " + std::string(GetModuleHandleA("UnityPlayer.dll") ? "yes" : "no"));
         return false;
     }
-    log("[+] rrid ready");
+    log("[+] rrid ready (spoofer: " + std::string(rrid::get_spoofer_backend()) + ")");
 
     std::filesystem::path dir(output_dir);
     std::error_code ec;
@@ -691,11 +896,14 @@ bool GameDumper::DumpAll(const std::string& output_dir,
     const auto rs_path     = dir / "GameDump.rs";
     const auto py_path     = dir / "GameDump.py";
     const auto json_path   = dir / "GameDump.json";
+    const auto index_path  = dir / "Index.json";
     const auto readme_path = dir / "README.txt";
+    const auto images_dir  = dir / "images";
 
+    IndexCollector index;
     log("[*] writing C++...");
     if (!WriteFormat(cpp_path, images,
-        [](std::ostream& out, RridImage* img, int indent) { WriteImageCpp(out, img, indent); },
+        [&index](std::ostream& out, RridImage* img, int indent) { WriteImageCpp(out, img, indent, &index); },
         [](std::ostream& out) {
             out << "// IL2CPP dump - " << CurrentTimestamp() << "\n";
             out << "// values are RVAs / offsets vs the image module base.\n";
@@ -752,6 +960,18 @@ bool GameDumper::DumpAll(const std::string& output_dir,
         return false;
     }
 
+    log("[*] writing index...");
+    if (!WriteIndexJson(index_path, index)) {
+        log("[!] cant open " + index_path.string());
+        return false;
+    }
+
+    log("[*] writing per-image headers...");
+    if (!WritePerImageHeaders(images_dir, images)) {
+        log("[!] cant write " + images_dir.string());
+        return false;
+    }
+
     WriteReadme(readme_path);
 
     log("[+] wrote " + dir.string());
@@ -760,6 +980,8 @@ bool GameDumper::DumpAll(const std::string& output_dir,
     log("    GameDump.rs   (Rust)");
     log("    GameDump.py   (Python)");
     log("    GameDump.json (JSON)");
+    log("    Index.json    (search index)");
+    log("    images/       (per-assembly C++)");
     log("    README.txt");
     return true;
 }

@@ -8,8 +8,6 @@
 static HMODULE g_hModule = nullptr;
 
 static DWORD WINAPI DumpThread(LPVOID) {
-    Sleep(2000);
-
     char desktop[MAX_PATH] = {};
     HRESULT hr = SHGetFolderPathA(nullptr, CSIDL_DESKTOP, nullptr, SHGFP_TYPE_CURRENT, desktop);
 
@@ -17,9 +15,7 @@ static DWORD WINAPI DumpThread(LPVOID) {
         ? std::string(desktop) + "\\GameDump"
         : "C:\\GameDump";
 
-    const bool ok = GameDumper::DumpAll(dir, [](const std::string& msg) {
-        printf("%s\n", msg.c_str());
-    });
+    const bool ok = GameDumper::DumpAll(dir);
 
     if (ok) {
         printf("[*] unloading\n");
