@@ -33,6 +33,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include "experimental/renamed_exports.h"
 
 #include <Windows.h>
 
@@ -424,6 +425,13 @@ namespace rrid {
 						return exported;
 					}
 
+					// Only after normal resolve failed and renamed mode was enabled.
+					if (renamed_exports::Active()) {
+						if (void* p = renamed_exports::Resolve(module_name_cstr(), name.c_str())) {
+							return p;
+						}
+					}
+
 					auto& cache = api_scan_cache();
 					if (cache.scanned) {
 						auto it = cache.functions.find(name);
@@ -514,6 +522,7 @@ namespace rrid {
 			inline bool find_api_functions(std::string* error_out = nullptr) {
 				auto& ctx = get_context();
 				reset_api_scan_cache();
+				renamed_exports::Reset(); // never leave experimental mode sticky across retries
 
 				ctx.api = {};
 				ctx.method_pointer_offset = 0;
@@ -577,7 +586,56 @@ namespace rrid {
 					ctx.method_pointer_offset = sizeof(void*);
 				}
 
+				auto apply_renamed_fallbacks = [&]() {
+					renamed_exports::ApiSlots slots;
+					slots.domain_get = reinterpret_cast<void**>(&ctx.api.domain_get);
+					slots.thread_attach = reinterpret_cast<void**>(&ctx.api.thread_attach);
+					slots.get_assemblies = reinterpret_cast<void**>(&ctx.api.get_assemblies);
+					slots.get_image = reinterpret_cast<void**>(&ctx.api.get_image);
+					slots.get_image_name = reinterpret_cast<void**>(&ctx.api.get_image_name);
+					slots.get_class_count = reinterpret_cast<void**>(&ctx.api.get_class_count);
+					slots.get_class = reinterpret_cast<void**>(&ctx.api.get_class);
+					slots.get_class_name = reinterpret_cast<void**>(&ctx.api.get_class_name);
+					slots.get_class_namespace = reinterpret_cast<void**>(&ctx.api.get_class_namespace);
+					slots.get_class_by_name = reinterpret_cast<void**>(&ctx.api.get_class_by_name);
+					slots.get_class_parent = reinterpret_cast<void**>(&ctx.api.get_class_parent);
+					slots.get_fields = reinterpret_cast<void**>(&ctx.api.get_fields);
+					slots.get_field_by_name = reinterpret_cast<void**>(&ctx.api.get_field_by_name);
+					slots.get_field_name = reinterpret_cast<void**>(&ctx.api.get_field_name);
+					slots.get_field_flags = reinterpret_cast<void**>(&ctx.api.get_field_flags);
+					slots.get_field_offset = reinterpret_cast<void**>(&ctx.api.get_field_offset);
+					slots.get_field_type = reinterpret_cast<void**>(&ctx.api.get_field_type);
+					slots.get_methods = reinterpret_cast<void**>(&ctx.api.get_methods);
+					slots.get_method_by_name = reinterpret_cast<void**>(&ctx.api.get_method_by_name);
+					slots.get_method_name = reinterpret_cast<void**>(&ctx.api.get_method_name);
+					slots.get_method_return_type = reinterpret_cast<void**>(&ctx.api.get_method_return_type);
+					slots.get_method_param_count = reinterpret_cast<void**>(&ctx.api.get_method_param_count);
+					slots.get_method_param_name = reinterpret_cast<void**>(&ctx.api.get_method_param_name);
+					slots.get_method_param_type = reinterpret_cast<void**>(&ctx.api.get_method_param_type);
+					slots.get_method_flags = reinterpret_cast<void**>(&ctx.api.get_method_flags);
+					slots.get_type_name = reinterpret_cast<void**>(&ctx.api.get_type_name);
+					slots.free_memory = reinterpret_cast<void**>(&ctx.api.free_memory);
+					slots.is_class_enum = reinterpret_cast<void**>(&ctx.api.is_class_enum);
+					slots.is_class_valuetype = reinterpret_cast<void**>(&ctx.api.is_class_valuetype);
+					slots.is_class_generic = reinterpret_cast<void**>(&ctx.api.is_class_generic);
+					slots.is_method_instance = reinterpret_cast<void**>(&ctx.api.is_method_instance);
+					slots.get_class_nested_types = reinterpret_cast<void**>(&ctx.api.get_class_nested_types);
+					slots.get_class_interfaces = reinterpret_cast<void**>(&ctx.api.get_class_interfaces);
+					renamed_exports::InstallFallbacks(slots);
+				};
+
+				// Normal games: if everything resolved, never touch experimental code.
 				if (const char* missing = detail::first_missing_api(ctx)) {
+					if (renamed_exports::DetectAndEnable(module_name_cstr())) {
+						apply_renamed_fallbacks();
+						if (const char* still = detail::first_missing_api(ctx)) {
+							if (error_out) {
+								*error_out = std::string("missing API: ") + still + " (renamed-export mode)";
+							}
+							return false;
+						}
+						return true;
+					}
 					if (error_out) {
 						*error_out = std::string("missing API: ") + missing;
 					}
@@ -797,6 +855,26 @@ namespace rrid {
 
 			inline bool select_backend(void* jmp_rdx, void* (*domain_get)(), const char** backend_name_out = nullptr) {
 				auto& ctx = get_context();
+
+				// Renamed-export mode (Pixel Worlds etc.): shims need direct calls.
+				// Normal games never set Active(), so they keep the old spoof path.
+				if (renamed_exports::PreferDirectCalls()) {
+					ctx.use_direct_calls = true;
+					void* domain = nullptr;
+					__try {
+						domain = domain_get();
+					}
+					__except (EXCEPTION_EXECUTE_HANDLER) {
+						domain = nullptr;
+					}
+					if (!domain) {
+						if (backend_name_out) *backend_name_out = "failed";
+						return false;
+					}
+					if (backend_name_out) *backend_name_out = "direct";
+					return true;
+				}
+
 				ctx.use_direct_calls = false;
 
 				const char* name = "legacy";

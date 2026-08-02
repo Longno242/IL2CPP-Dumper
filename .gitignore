@@ -48,3 +48,6 @@ Desktop.ini
 
 # Local dumps (don't commit dumped headers)
 GameDump.hpp
+
+# Local experiment sandbox (do not commit)
+il2cpp dummper test/

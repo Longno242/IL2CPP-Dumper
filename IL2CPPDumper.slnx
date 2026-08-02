@@ -4,4 +4,5 @@
     <Platform Name="x86" />
   </Configurations>
   <Project Path="IL2CPP Dumper/IL2CPPDumper.vcxproj" Id="8df73137-13fa-4256-9340-16b286bd4ccc" />
+  <Project Path="IL2CPP Dumper Exe/IL2CPPDumperExe.vcxproj" Id="a1b2c3d4-e5f6-7890-abcd-ef1234567890" />
 </Solution>
