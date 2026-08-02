@@ -73,15 +73,17 @@ What it does **not** do:
 
 ## Build
 
-1. Open `IL2CPPDumper.slnx` in Visual Studio 2022.
+1. Open `IL2CPPDumper.slnx` in Visual Studio 2022+.
 2. Set the configuration to **Release | x64**.
 3. Build the solution (`Ctrl+Shift+B`).
 
-Output: `x64\Release\IL2CPPDumper.dll`.
-
-Pre-built binaries are attached to each [GitHub release](https://github.com/Longno242/IL2CPP-Dumper/releases).
+Outputs:
+- `x64\Release\IL2CPPDumper.dll` — runtime injector
+- `x64\Release\IL2CPPDumper.exe` — offline static dumper
 
 ## Usage
+
+### Runtime DLL
 
 1. Launch the target game and let it reach the main menu (so IL2CPP is fully initialised).
 2. Inject `IL2CPPDumper.dll` into the game process. Any injector works:
@@ -93,6 +95,17 @@ Pre-built binaries are attached to each [GitHub release](https://github.com/Long
 4. When it finishes, a `GameDump` folder appears on your desktop with all output files.
 
 If the desktop path can't be resolved (very rare), files are written to `C:\GameDump\` instead.
+
+### Static EXE
+
+```
+IL2CPPDumper.exe <GameAssembly.dll> <global-metadata.dat> [output-dir]
+IL2CPPDumper.exe <game-folder>
+```
+
+Use the runtime DLL if metadata on disk is encrypted/packed.
+
+Pre-built binaries are attached to each [GitHub release](https://github.com/Longno242/IL2CPP-Dumper/releases).
 
 ### Output files
 
@@ -213,15 +226,14 @@ Re-dump whenever the game updates and your offsets are automatically refreshed.
 
 ```
 IL2CPP-Dumper/
-├── IL2CPPDumper.slnx          Visual Studio solution
-├── README.md                  You are here
-└── IL2CPP Dumper/
-    ├── IL2CPPDumper.vcxproj   DLL project (x64 / x86, Debug / Release)
-    ├── dllmain.cpp            DLL entry, spawns the dump thread on attach
-    ├── dumper.h               Public interface (GameDumper::DumpAll)
-    ├── dumper.cpp             Multi-format emitter (C++, C#, Rust, Python, JSON, Index)
-    ├── rrid.hpp                 IL2CPP metadata reader + return spoofer
-    └── framework.h            Standard Win32 framework header
+├── IL2CPPDumper.slnx
+├── README.md
+├── IL2CPP Dumper/                 runtime DLL
+│   ├── experimental/              renamed-export fallback (opt-in after normal resolve fails)
+│   ├── dllmain.cpp
+│   ├── dumper.cpp / dumper.h
+│   └── rrid.hpp
+└── IL2CPP Dumper Exe/             offline static EXE (self-contained)
 ```
 
 ## How it works

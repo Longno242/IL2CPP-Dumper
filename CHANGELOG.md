@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## [v1.3.0] - 2026-08-02
+
+### Added
+- **Static offline EXE** — dump from `GameAssembly.dll` + `global-metadata.dat` without injecting (`IL2CPP Dumper Exe/`).
+- **Experimental renamed-export resolve** — `IL2CPP Dumper/experimental/` recovers APIs when export *names* are junk (e.g. Pixel Worlds). Only runs after the normal resolve path fails.
+
+### Notes
+- Encrypted on-disk metadata still requires the runtime DLL.
+- Normal IL2CPP games keep the existing export / UnityPlayer resolve path.
+
 ## [v1.2.0] - 2026-07-03
 
 ### Added

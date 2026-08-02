@@ -1,20 +1,15 @@
 #pragma once
-// Experimental: renamed IL2CPP exports (e.g. Pixel Worlds).
-// Only activated from rrid when the normal resolve path already failed —
-// normal games never enter this path.
+
+// Fallback resolver for GameAssembly builds that rename il2cpp_* exports.
+// Activated only after the normal GetProcAddress / UnityPlayer path fails.
 
 namespace renamed_exports {
 
-// Enable only if GameAssembly has exports but none named il2cpp_*.
-// Returns false if it does not look like a renamed build.
 bool DetectAndEnable(const char* module_name);
 bool Active();
 void Reset();
 
-// Resolve by matching export *bodies* (names are junk).
 void* Resolve(const char* module_name, const char* api_name);
-
-// Prefer direct calls — return spoof + our shims do not mix well.
 bool PreferDirectCalls();
 
 struct ApiSlots {

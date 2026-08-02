@@ -425,7 +425,6 @@ namespace rrid {
 						return exported;
 					}
 
-					// Only after normal resolve failed and renamed mode was enabled.
 					if (renamed_exports::Active()) {
 						if (void* p = renamed_exports::Resolve(module_name_cstr(), name.c_str())) {
 							return p;
@@ -522,7 +521,7 @@ namespace rrid {
 			inline bool find_api_functions(std::string* error_out = nullptr) {
 				auto& ctx = get_context();
 				reset_api_scan_cache();
-				renamed_exports::Reset(); // never leave experimental mode sticky across retries
+				renamed_exports::Reset();
 
 				ctx.api = {};
 				ctx.method_pointer_offset = 0;
@@ -624,7 +623,6 @@ namespace rrid {
 					renamed_exports::InstallFallbacks(slots);
 				};
 
-				// Normal games: if everything resolved, never touch experimental code.
 				if (const char* missing = detail::first_missing_api(ctx)) {
 					if (renamed_exports::DetectAndEnable(module_name_cstr())) {
 						apply_renamed_fallbacks();
@@ -856,8 +854,6 @@ namespace rrid {
 			inline bool select_backend(void* jmp_rdx, void* (*domain_get)(), const char** backend_name_out = nullptr) {
 				auto& ctx = get_context();
 
-				// Renamed-export mode (Pixel Worlds etc.): shims need direct calls.
-				// Normal games never set Active(), so they keep the old spoof path.
 				if (renamed_exports::PreferDirectCalls()) {
 					ctx.use_direct_calls = true;
 					void* domain = nullptr;
