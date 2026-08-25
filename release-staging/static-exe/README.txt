@@ -1,6 +1,6 @@
-﻿IL2CPPDumper static EXE (v1.3.0)
+﻿IL2CPP Dumper static tool (v1.3.1)
 
-IL2CPPDumper-static.exe <GameAssembly.dll> <global-metadata.dat> [output-dir]
-IL2CPPDumper-static.exe <game-folder>
+dumper.exe <GameAssembly.dll> <global-metadata.dat> [output-dir]
+dumper.exe <game-folder>
 
 Encrypted/packed metadata needs the runtime DLL instead.

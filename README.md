@@ -70,8 +70,8 @@ Static tools (Il2CppDumper, Il2CppInspector, …) parse `global-metadata.dat` di
 3. Build (`Ctrl+Shift+B`).
 
 Outputs:
-- `x64\Release\IL2CPPDumper.dll` — runtime component
-- `x64\Release\IL2CPPDumper.exe` — static/offline tool
+- `x64\Release\dumper.dll` — runtime component
+- `x64\Release\dumper.exe` — static/offline tool
 
 Pre-built binaries: [GitHub releases](https://github.com/Longno242/IL2CPP-Dumper/releases).
 
@@ -80,15 +80,15 @@ Pre-built binaries: [GitHub releases](https://github.com/Longno242/IL2CPP-Dumper
 ### Runtime DLL
 
 1. Start the target application and wait until IL2CPP has finished initializing (usually main menu).
-2. Load `IL2CPPDumper.dll` into the process with your preferred DLL loader.
+2. Load `dumper.dll` into the process with your preferred DLL loader.
 3. A console titled **IL2CPP Dumper** shows progress.
 4. Output appears under `Desktop\GameDump\` (or `C:\GameDump\` if the desktop path is unavailable).
 
 ### Static EXE
 
 ```
-IL2CPPDumper.exe <GameAssembly.dll> <global-metadata.dat> [output-dir]
-IL2CPPDumper.exe <game-folder>
+dumper.exe <GameAssembly.dll> <global-metadata.dat> [output-dir]
+dumper.exe <game-folder>
 ```
 
 If metadata on disk is encrypted, use the runtime DLL instead.

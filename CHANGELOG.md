@@ -2,11 +2,18 @@
 
 All notable changes to this project are documented here.
 
+## [v1.3.1] - 2026-08-25
+
+### Changed
+- Release binaries renamed to **`dumper.dll`** (runtime) and **`dumper.exe`** (static).
+- `images/` emits per-assembly **C#** files (`.cs`) instead of C++ headers.
+- Docs reframed for metadata analysis / authorized research use.
+
 ## [v1.3.0] - 2026-08-02
 
 ### Added
 - **Static offline EXE** — dump from `GameAssembly.dll` + `global-metadata.dat` without injecting (`IL2CPP Dumper Exe/`).
-- **Experimental renamed-export resolve** — `IL2CPP Dumper/experimental/` recovers APIs when export *names* are junk (e.g. Pixel Worlds). Only runs after the normal resolve path fails.
+- **Experimental renamed-export resolve** — `IL2CPP Dumper/experimental/` recovers APIs when export *names* are stripped or obfuscated. Only runs after the normal resolve path fails.
 
 ### Notes
 - Encrypted on-disk metadata still requires the runtime DLL.
