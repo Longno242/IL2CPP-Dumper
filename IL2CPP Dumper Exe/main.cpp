@@ -38,7 +38,7 @@ static void PrintUsage(const char* argv0) {
         << "  " << argv0 << " <GameAssembly.dll> <global-metadata.dat> [output-dir]\n"
         << "  " << argv0 << " <game-folder> [output-dir]\n"
         << "  " << argv0 << "            (prompts for paths)\n\n"
-        << "For protected/encrypted games, use the runtime DLL injector instead.\n";
+        << "For protected/encrypted metadata, use the runtime DLL instead.\n";
 }
 
 static bool FindInFolder(const fs::path& folder, fs::path& assembly, fs::path& metadata) {

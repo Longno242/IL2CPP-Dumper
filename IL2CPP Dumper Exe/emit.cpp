@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -46,6 +47,42 @@ bool IsKeyword(const std::string& s) {
         "in","is","from","import","pass","None","True","False","lambda","nonlocal","global","def"
     };
     return kws.count(s) > 0;
+}
+
+std::string SanitizeFileName(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    for (unsigned char c : in) {
+        if (c < 32 || c == '<' || c == '>' || c == ':' || c == '"' ||
+            c == '/' || c == '\\' || c == '|' || c == '?' || c == '*') {
+            out += '_';
+        } else {
+            out += static_cast<char>(c);
+        }
+    }
+    while (!out.empty() && (out.back() == ' ' || out.back() == '.')) out.pop_back();
+    if (out.empty()) out = "image";
+    return out;
+}
+
+std::string ImageDumpFileName(const std::string& image_name) {
+    std::string name = SanitizeFileName(image_name);
+    auto ends_with_ci = [](const std::string& s, const char* ext) {
+        const size_t n = std::strlen(ext);
+        if (s.size() < n) return false;
+        for (size_t i = 0; i < n; ++i) {
+            const char a = s[s.size() - n + i];
+            const char b = ext[i];
+            const char al = (a >= 'A' && a <= 'Z') ? static_cast<char>(a - 'A' + 'a') : a;
+            const char bl = (b >= 'A' && b <= 'Z') ? static_cast<char>(b - 'A' + 'a') : b;
+            if (al != bl) return false;
+        }
+        return true;
+    };
+    if (ends_with_ci(name, ".dll") || ends_with_ci(name, ".exe") || ends_with_ci(name, ".hpp") || ends_with_ci(name, ".cs")) {
+        name = name.substr(0, name.find_last_of('.'));
+    }
+    return name + ".cs";
 }
 
 std::string SanitizeIdent(const std::string& in) {
@@ -689,14 +726,15 @@ bool WritePerImageHeaders(const std::filesystem::path& images_dir, const DumpRoo
     std::error_code ec;
     std::filesystem::create_directories(images_dir, ec);
     for (const auto& img : root.images) {
-        const auto path = images_dir / (img.ident + ".hpp");
+        const auto path = images_dir / ImageDumpFileName(img.name);
         std::ofstream out(path);
         if (!out.is_open()) return false;
         out << "// IL2CPP dump - " << root.timestamp << "\n";
         out << "// image: " << img.name << "\n";
-        out << "#pragma once\n#include <cstdint>\n\nnamespace GameDump {\n\n";
-        WriteImageCpp(out, img, 0);
-        out << "} // GameDump\n";
+        out << "// values are RVAs / offsets vs " << root.module << " base.\n\n";
+        out << "namespace GameDump\n{\n\n";
+        WriteImageCSharp(out, img, 0);
+        out << "}\n";
     }
     return true;
 }
@@ -1041,7 +1079,7 @@ void WriteReadme(const std::filesystem::path& path) {
     out << "  Index.json         - flat search index\n";
     out << "  Diff.txt           - RVA changes vs previous Index.json (if present)\n";
     out << "  Strings.json       - managed string literals + static string fields\n";
-    out << "  images/            - per-assembly C++ headers\n";
+    out << "  images/            - per-assembly C# dumps (for Mono/C# projects)\n";
     out << "  scripts/ida_apply_names.py\n";
     out << "  scripts/ghidra_apply_names.py\n";
     out << "  scripts/binja_apply_names.py\n";

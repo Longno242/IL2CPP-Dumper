@@ -2,6 +2,7 @@
 #include "dumper.h"
 
 #include <chrono>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -22,6 +23,43 @@ namespace {
         std::ostringstream os;
         os << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
         return os.str();
+    }
+
+    std::string SanitizeFileName(const std::string& in) {
+        std::string out;
+        out.reserve(in.size());
+        for (unsigned char c : in) {
+            if (c < 32 || c == '<' || c == '>' || c == ':' || c == '"' ||
+                c == '/' || c == '\\' || c == '|' || c == '?' || c == '*') {
+                out += '_';
+            } else {
+                out += static_cast<char>(c);
+            }
+        }
+        while (!out.empty() && (out.back() == ' ' || out.back() == '.')) out.pop_back();
+        if (out.empty()) out = "image";
+        return out;
+    }
+
+    // Prefer the real assembly name for images/ output (Assembly-CSharp.dll -> Assembly-CSharp.cs).
+    std::string ImageDumpFileName(const std::string& image_name) {
+        std::string name = SanitizeFileName(image_name);
+        auto ends_with_ci = [](const std::string& s, const char* ext) {
+            const size_t n = std::strlen(ext);
+            if (s.size() < n) return false;
+            for (size_t i = 0; i < n; ++i) {
+                const char a = s[s.size() - n + i];
+                const char b = ext[i];
+                const char al = (a >= 'A' && a <= 'Z') ? static_cast<char>(a - 'A' + 'a') : a;
+                const char bl = (b >= 'A' && b <= 'Z') ? static_cast<char>(b - 'A' + 'a') : b;
+                if (al != bl) return false;
+            }
+            return true;
+        };
+        if (ends_with_ci(name, ".dll") || ends_with_ci(name, ".exe") || ends_with_ci(name, ".hpp") || ends_with_ci(name, ".cs")) {
+            name = name.substr(0, name.find_last_of('.'));
+        }
+        return name + ".cs";
     }
 
     std::string SanitizeIdent(const std::string& in) {
@@ -804,17 +842,17 @@ namespace {
         std::filesystem::create_directories(images_dir, ec);
 
         for (auto* img : images) {
-            const auto path = images_dir / (SanitizeIdent(img->get_name()) + ".hpp");
+            const auto path = images_dir / ImageDumpFileName(img->get_name());
             std::ofstream out(path);
             if (!out.is_open()) {
                 return false;
             }
             out << "// IL2CPP dump - " << CurrentTimestamp() << "\n";
             out << "// image: " << img->get_name() << "\n";
-            out << "#pragma once\n#include <cstdint>\n\n";
-            out << "namespace GameDump {\n\n";
-            WriteImageCpp(out, img, 0, nullptr);
-            out << "} // GameDump\n";
+            out << "// values are RVAs / offsets vs the image module base.\n\n";
+            out << "namespace GameDump\n{\n\n";
+            WriteImageCSharp(out, img, 0);
+            out << "}\n";
             out.close();
         }
         return true;
@@ -837,7 +875,7 @@ namespace {
         out << "  GameDump.py   - Python  (class attributes for scripting)\n";
         out << "  GameDump.json - JSON    (for tools, scripts, or custom parsers)\n";
         out << "  Index.json    - flat search index (methods, fields, classes)\n";
-        out << "  images/       - per-assembly C++ headers (smaller compile units)\n\n";
+        out << "  images/       - per-assembly C# dumps (drop into a Mono/C# project)\n\n";
         out << "Suffix guide:\n";
         out << "  *_RVA on methods/static fields = offset from GameAssembly.dll base\n";
         out << "  *_Offset on instance fields    = offset from the object pointer\n";
@@ -981,7 +1019,7 @@ bool GameDumper::DumpAll(const std::string& output_dir,
     log("    GameDump.py   (Python)");
     log("    GameDump.json (JSON)");
     log("    Index.json    (search index)");
-    log("    images/       (per-assembly C++)");
+    log("    images/       (per-assembly C#)");
     log("    README.txt");
     return true;
 }
