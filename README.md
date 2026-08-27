@@ -1,5 +1,4 @@
 # IL2CPP Dumper
-# FOR SINGLEPLAYER GAMES OBV
 
 
 Extract and document IL2CPP metadata from Unity games. The runtime component reads live metadata from a running process; the static EXE reads `GameAssembly.dll` and `global-metadata.dat` from disk. Output is written to a `GameDump` folder with type layouts, field offsets, method RVAs, inheritance info, and C#-style signatures.
