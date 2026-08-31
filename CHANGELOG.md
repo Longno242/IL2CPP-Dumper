@@ -7,7 +7,6 @@ All notable changes to this project are documented here.
 ### Added
 - **Module auto-discovery** — runtime DLL scans loaded modules for `GameAssembly.dll`, `UserAssembly.dll`, renamed export tables, and `il2cpp_domain_get`.
 - **Export table + pointer-table scan** — `experimental/export_scan` recovers `il2cpp_*` APIs when `GetProcAddress` fails but symbols still exist in the PE.
-- **Runtime environment config** — `IL2CPP_MODULE`, `IL2CPP_DUMP_DIR`, `IL2CPP_DUMP_RETRIES`, `IL2CPP_DUMP_RETRY_MS`.
 - **Expanded renamed-export recovery** — lower export threshold, partial-missing API trigger, alternate `domain_get` / `il2cpp_free` patterns, nested-type and interface iterator detection.
 - **Static EXE** — folder discovery also checks `UserAssembly.dll`.
 

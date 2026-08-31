@@ -13,8 +13,6 @@
 #include <unordered_set>
 #include <vector>
 
-#include "experimental/runtime_config.h"
-
 namespace {
 
     std::string CurrentTimestamp() {
@@ -896,15 +894,12 @@ bool GameDumper::DumpAll(const std::string& output_dir,
 
     bool ready = false;
     std::string last_error;
-    const int max_attempts = runtime_config::init_retries();
-    const int retry_ms = runtime_config::init_retry_ms();
-    for (int attempt = 0; attempt < max_attempts; ++attempt) {
+    for (int attempt = 0; attempt < 120; ++attempt) {
         if (attempt > 0) {
             if (attempt % 10 == 0) {
-                log("[*] waiting for IL2CPP (" + std::to_string(attempt + 1) + "/" +
-                    std::to_string(max_attempts) + "): " + last_error);
+                log("[*] waiting for IL2CPP (" + std::to_string(attempt + 1) + "/120): " + last_error);
             }
-            Sleep(retry_ms);
+            Sleep(500);
         }
         if (rrid::init()) {
             ready = true;

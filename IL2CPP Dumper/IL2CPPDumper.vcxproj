@@ -150,7 +150,6 @@
     <ClInclude Include="experimental\renamed_exports.h" />
     <ClInclude Include="experimental\export_scan.h" />
     <ClInclude Include="experimental\module_discovery.h" />
-    <ClInclude Include="experimental\runtime_config.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">

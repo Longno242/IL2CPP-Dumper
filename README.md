@@ -146,8 +146,7 @@ IL2CPP-Dumper/
 │   ├── experimental/
 │   │   ├── renamed_exports.*   pattern match for obfuscated export names
 │   │   ├── export_scan.*       PE export + pointer-table recovery
-│   │   ├── module_discovery.*  auto-detect IL2CPP module in process
-│   │   └── runtime_config.h    env var overrides
+│   │   └── module_discovery.*  auto-detect IL2CPP module in process
 │   └── rrid.hpp                IL2CPP metadata reader
 └── IL2CPP Dumper Exe/          static/offline EXE
 ```
@@ -162,20 +161,13 @@ IL2CPP-Dumper/
 
 ## Configuration
 
-**Environment variables (runtime DLL):**
-
-| Variable | Purpose |
-|---|---|
-| `IL2CPP_MODULE` | Force module name, e.g. `UserAssembly.dll` |
-| `IL2CPP_DUMP_DIR` | Output folder (default: Desktop `GameDump`) |
-| `IL2CPP_DUMP_RETRIES` | Init retry count (default: 120) |
-| `IL2CPP_DUMP_RETRY_MS` | Delay between retries in ms (default: 500) |
-
-**Source tunables:**
+Tunables in source:
 
 | Setting | Location |
 |---|---|
 | Module name default | `rrid.hpp` |
+| Init retry count / interval | `dumper.cpp` |
+| Output folder | `dllmain.cpp` |
 | Renamed-export patterns | `experimental/renamed_exports.cpp` |
 
 ## Troubleshooting
@@ -184,7 +176,7 @@ IL2CPP-Dumper/
 Wait until IL2CPP is initialized before loading the DLL. Init retries for up to ~60 seconds.
 
 **`rrid::init failed`**
-The console prints the reason (`missing API`, module not loaded, etc.). Set `IL2CPP_MODULE` if the game uses `UserAssembly.dll` or a custom name. The DLL also lists scored module candidates when auto-detect runs.
+The console prints the reason (`missing API`, module not loaded, etc.). The DLL lists scored module candidates when auto-detect runs. Try a later init point or report the Unity version.
 
 **Renamed / obfuscated exports**
 The experimental path pattern-matches export bodies when `il2cpp_*` names are gone. Partial recovery is logged as `api scan: table-scan` or `renamed-export mode`.
@@ -197,7 +189,7 @@ Compiler-generated IL2CPP names are preserved; numeric suffixes avoid collisions
 
 ## Limitations
 
-- Auto-discovery covers common module names; exotic packers may still need `IL2CPP_MODULE`.
+- Auto-discovery covers common module names; exotic packers may still need a source edit in `rrid.hpp`.
 - Metadata and RVAs only — no method bodies or full generic expansion.
 - x64 tested; Win32 configs exist but are rarely used.
 

@@ -980,12 +980,6 @@ inline bool rrid::auto_detect_module() {
 	return true;
 }
 
-inline void rrid_set_module_from_env(const char* name) {
-	if (name && *name) {
-		rrid::set_module_name(name);
-	}
-}
-
 inline bool rrid::init() {
 	auto& ctx = detail::get_context();
 	if (ctx.initialized) {
