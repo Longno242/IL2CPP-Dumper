@@ -34,6 +34,8 @@
 #include <cstdint>
 #include <cstdio>
 #include "experimental/renamed_exports.h"
+#include "experimental/export_scan.h"
+#include "experimental/module_discovery.h"
 
 #include <Windows.h>
 
@@ -89,8 +91,10 @@ namespace rrid {
 	bool init();
 	void set_module_name(const std::string& name);
 	const std::string& get_module_name();
+	bool auto_detect_module();
 	const char* get_spoofer_backend();
 	const char* get_init_error();
+	const char* get_api_scan_path();
 
 	[[nodiscard]] RridImage* get_image(const std::string& name);
 	[[nodiscard]] const std::vector<RridImage*>& get_images();
@@ -402,16 +406,26 @@ namespace rrid {
 
 		inline void* find_jmp_gadget() {
 			static const char* patterns[] = {
-				"\xFF\x27", // jmp [rdi]
-				"\xFF\x23", // jmp [rbx]
+				"\xFF\x27", // jmp [rdi] - legacy stub
+				"\xFF\x23", // jmp [rbx] - v2 stub
 				"\xFF\x26", // jmp [rsi]
 				"\xFF\x21", // jmp [rcx]
 			};
-			static const char* masks[] = { "xx", "xx", "xx", "xx" };
 
-			for (size_t i = 0; i < sizeof(patterns) / sizeof(patterns[0]); ++i) {
-				if (void* hit = pattern::find_pattern(module_name_cstr(), patterns[i], masks[i])) {
-					return hit;
+			const char* modules[] = {
+				module_name_cstr(),
+				"UnityPlayer.dll",
+				nullptr
+			};
+
+			for (const char* mod : modules) {
+				if (!mod || !GetModuleHandleA(mod)) {
+					continue;
+				}
+				for (const char* pat : patterns) {
+					if (void* hit = pattern::find_pattern(mod, pat, "xx")) {
+						return hit;
+					}
 				}
 			}
 			return nullptr;
@@ -423,6 +437,10 @@ namespace rrid {
 				inline void* find_api_function(const std::string& name) {
 					if (void* exported = resolve_export(name.c_str())) {
 						return exported;
+					}
+
+					if (void* scanned = export_scan::lookup(name.c_str())) {
+						return scanned;
 					}
 
 					if (renamed_exports::Active()) {
@@ -521,6 +539,8 @@ namespace rrid {
 			inline bool find_api_functions(std::string* error_out = nullptr) {
 				auto& ctx = get_context();
 				reset_api_scan_cache();
+				export_scan::reset();
+				export_scan::build_cache(module_name_cstr());
 				renamed_exports::Reset();
 
 				ctx.api = {};
@@ -947,6 +967,25 @@ inline const char* rrid::get_init_error() {
 	return err.empty() ? "unknown" : err.c_str();
 }
 
+inline const char* rrid::get_api_scan_path() {
+	return export_scan::last_path_label();
+}
+
+inline bool rrid::auto_detect_module() {
+	std::string detected;
+	if (!module_discovery::auto_detect(&detected)) {
+		return false;
+	}
+	set_module_name(detected);
+	return true;
+}
+
+inline void rrid_set_module_from_env(const char* name) {
+	if (name && *name) {
+		rrid::set_module_name(name);
+	}
+}
+
 inline bool rrid::init() {
 	auto& ctx = detail::get_context();
 	if (ctx.initialized) {
@@ -956,8 +995,10 @@ inline bool rrid::init() {
 	ctx.init_error.clear();
 
 	if (!GetModuleHandleA(detail::module_name_cstr())) {
-		ctx.init_error = std::string(detail::module_name_cstr()) + " is not loaded";
-		return false;
+		if (!auto_detect_module()) {
+			ctx.init_error = std::string(detail::module_name_cstr()) + " is not loaded";
+			return false;
+		}
 	}
 
 	std::string api_error;
@@ -971,11 +1012,10 @@ inline bool rrid::init() {
 
 	ctx.jmp_rdx = detail::find_jmp_gadget();
 	if (!ctx.jmp_rdx) {
-		ctx.init_error = "failed to find jmp gadget in " + detail::module_name_storage();
-		return false;
+		ctx.use_direct_calls = true;
+		ctx.spoofer_backend_name = "direct";
 	}
-
-	if (!detail::return_spoofer::select_backend(ctx.jmp_rdx, ctx.api.domain_get, &ctx.spoofer_backend_name)) {
+	else if (!detail::return_spoofer::select_backend(ctx.jmp_rdx, ctx.api.domain_get, &ctx.spoofer_backend_name)) {
 		ctx.init_error = "return spoofer probe failed (domain_get returned null)";
 		return false;
 	}

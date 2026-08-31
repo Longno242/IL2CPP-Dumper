@@ -41,7 +41,8 @@ Typical uses: understanding your own Unity IL2CPP builds, generating reference h
 - Duplicate identifiers auto-suffixed (`_2`, `_3`, …).
 - Method overloads disambiguated by parameter types.
 - Nested types and enum members included.
-- Runtime init retries until IL2CPP is ready; export resolution with fallbacks for stripped or renamed APIs.
+- Runtime init retries until IL2CPP is ready; auto-detects `GameAssembly.dll` / `UserAssembly.dll` and other IL2CPP modules.
+- Export resolution: `GetProcAddress` → PE/table scan → UnityPlayer scan → experimental renamed-export patterns.
 - Static EXE for unencrypted on-disk metadata (metadata versions supported by the parser).
 - C++20, Win32 only — no third-party runtime dependencies.
 
@@ -62,7 +63,7 @@ Static tools (Il2CppDumper, Il2CppInspector, …) parse `global-metadata.dat` di
 | Toolchain | Visual Studio 2022+ with C++ desktop workload |
 | SDK | Windows 10 SDK |
 | Language | C++20 |
-| Target | Unity IL2CPP build (`GameAssembly.dll` present) |
+| Target | Unity IL2CPP build (`GameAssembly.dll` or `UserAssembly.dll`) |
 
 ## Build
 
@@ -142,7 +143,11 @@ Re-export after a game update to refresh offsets and signatures.
 IL2CPP-Dumper/
 ├── IL2CPPDumper.slnx
 ├── IL2CPP Dumper/              runtime DLL
-│   ├── experimental/           renamed-export fallback (after normal resolve fails)
+│   ├── experimental/
+│   │   ├── renamed_exports.*   pattern match for obfuscated export names
+│   │   ├── export_scan.*       PE export + pointer-table recovery
+│   │   ├── module_discovery.*  auto-detect IL2CPP module in process
+│   │   └── runtime_config.h    env var overrides
 │   └── rrid.hpp                IL2CPP metadata reader
 └── IL2CPP Dumper Exe/          static/offline EXE
 ```
@@ -157,13 +162,21 @@ IL2CPP-Dumper/
 
 ## Configuration
 
-No config file. Tunables in source:
+**Environment variables (runtime DLL):**
+
+| Variable | Purpose |
+|---|---|
+| `IL2CPP_MODULE` | Force module name, e.g. `UserAssembly.dll` |
+| `IL2CPP_DUMP_DIR` | Output folder (default: Desktop `GameDump`) |
+| `IL2CPP_DUMP_RETRIES` | Init retry count (default: 120) |
+| `IL2CPP_DUMP_RETRY_MS` | Delay between retries in ms (default: 500) |
+
+**Source tunables:**
 
 | Setting | Location |
 |---|---|
-| Module name (default `GameAssembly.dll`) | `rrid.hpp` |
-| Init retry count / interval | `dumper.cpp` |
-| Output folder | `dllmain.cpp` |
+| Module name default | `rrid.hpp` |
+| Renamed-export patterns | `experimental/renamed_exports.cpp` |
 
 ## Troubleshooting
 
@@ -171,7 +184,10 @@ No config file. Tunables in source:
 Wait until IL2CPP is initialized before loading the DLL. Init retries for up to ~60 seconds.
 
 **`rrid::init failed`**
-The console prints the reason (`missing API`, module not loaded, etc.). Try a later init point or report the Unity version.
+The console prints the reason (`missing API`, module not loaded, etc.). Set `IL2CPP_MODULE` if the game uses `UserAssembly.dll` or a custom name. The DLL also lists scored module candidates when auto-detect runs.
+
+**Renamed / obfuscated exports**
+The experimental path pattern-matches export bodies when `il2cpp_*` names are gone. Partial recovery is logged as `api scan: table-scan` or `renamed-export mode`.
 
 **Loader fails**
 Process protection or loader compatibility — outside this tool’s scope.
@@ -181,7 +197,7 @@ Compiler-generated IL2CPP names are preserved; numeric suffixes avoid collisions
 
 ## Limitations
 
-- Default module name is `GameAssembly.dll`.
+- Auto-discovery covers common module names; exotic packers may still need `IL2CPP_MODULE`.
 - Metadata and RVAs only — no method bodies or full generic expansion.
 - x64 tested; Win32 configs exist but are rarely used.
 

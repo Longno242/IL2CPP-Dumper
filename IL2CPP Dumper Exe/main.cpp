@@ -35,19 +35,27 @@ static void PrintUsage(const char* argv0) {
         << "IL2CPP Dumper (static / offline)\n"
         << "Dumps metadata from GameAssembly.dll + global-metadata.dat without running the game.\n\n"
         << "Usage:\n"
-        << "  " << argv0 << " <GameAssembly.dll> <global-metadata.dat> [output-dir]\n"
+        << "  " << argv0 << " <GameAssembly.dll|UserAssembly.dll> <global-metadata.dat> [output-dir]\n"
         << "  " << argv0 << " <game-folder> [output-dir]\n"
         << "  " << argv0 << "            (prompts for paths)\n\n"
         << "For protected/encrypted metadata, use the runtime DLL instead.\n";
 }
 
 static bool FindInFolder(const fs::path& folder, fs::path& assembly, fs::path& metadata) {
-    const fs::path ga = folder / "GameAssembly.dll";
+    const fs::path candidates[] = {
+        folder / "GameAssembly.dll",
+        folder / "UserAssembly.dll",
+    };
+    for (const auto& ga : candidates) {
+        if (fs::exists(ga)) {
+            assembly = ga;
+            break;
+        }
+    }
     const fs::path meta1 = folder / "global-metadata.dat";
     const fs::path meta2 = folder / "il2cpp_data" / "Metadata" / "global-metadata.dat";
     const fs::path meta3 = folder / "Data" / "il2cpp_data" / "Metadata" / "global-metadata.dat";
 
-    if (fs::exists(ga)) assembly = ga;
     if (fs::exists(meta1)) metadata = meta1;
     else if (fs::exists(meta2)) metadata = meta2;
     else if (fs::exists(meta3)) metadata = meta3;

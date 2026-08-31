@@ -13,6 +13,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include "experimental/runtime_config.h"
+
 namespace {
 
     std::string CurrentTimestamp() {
@@ -894,12 +896,15 @@ bool GameDumper::DumpAll(const std::string& output_dir,
 
     bool ready = false;
     std::string last_error;
-    for (int attempt = 0; attempt < 120; ++attempt) {
+    const int max_attempts = runtime_config::init_retries();
+    const int retry_ms = runtime_config::init_retry_ms();
+    for (int attempt = 0; attempt < max_attempts; ++attempt) {
         if (attempt > 0) {
             if (attempt % 10 == 0) {
-                log("[*] waiting for IL2CPP (" + std::to_string(attempt + 1) + "/120): " + last_error);
+                log("[*] waiting for IL2CPP (" + std::to_string(attempt + 1) + "/" +
+                    std::to_string(max_attempts) + "): " + last_error);
             }
-            Sleep(500);
+            Sleep(retry_ms);
         }
         if (rrid::init()) {
             ready = true;
@@ -909,11 +914,15 @@ bool GameDumper::DumpAll(const std::string& output_dir,
     }
     if (!ready) {
         log("[!] rrid::init failed: " + last_error);
+        log("[!] module: " + rrid::get_module_name());
         log("[!] GameAssembly loaded: " + std::string(GetModuleHandleA("GameAssembly.dll") ? "yes" : "no"));
+        log("[!] UserAssembly loaded: " + std::string(GetModuleHandleA("UserAssembly.dll") ? "yes" : "no"));
         log("[!] UnityPlayer loaded: " + std::string(GetModuleHandleA("UnityPlayer.dll") ? "yes" : "no"));
         return false;
     }
-    log("[+] rrid ready (spoofer: " + std::string(rrid::get_spoofer_backend()) + ")");
+    log("[+] rrid ready (module: " + rrid::get_module_name() +
+        ", spoofer: " + std::string(rrid::get_spoofer_backend()) +
+        ", api scan: " + std::string(rrid::get_api_scan_path()) + ")");
 
     std::filesystem::path dir(output_dir);
     std::error_code ec;

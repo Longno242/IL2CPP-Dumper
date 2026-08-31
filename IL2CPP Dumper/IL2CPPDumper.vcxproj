@@ -148,6 +148,9 @@
     <ClInclude Include="framework.h" />
     <ClInclude Include="rrid.hpp" />
     <ClInclude Include="experimental\renamed_exports.h" />
+    <ClInclude Include="experimental\export_scan.h" />
+    <ClInclude Include="experimental\module_discovery.h" />
+    <ClInclude Include="experimental\runtime_config.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
@@ -159,6 +162,8 @@
     </ClCompile>
     <ClCompile Include="dumper.cpp" />
     <ClCompile Include="experimental\renamed_exports.cpp" />
+    <ClCompile Include="experimental\export_scan.cpp" />
+    <ClCompile Include="experimental\module_discovery.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

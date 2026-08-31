@@ -73,7 +73,7 @@ bool ModuleLooksRenamed(HMODULE mod) {
 	if (!dir.VirtualAddress) return false;
 
 	auto* exp = reinterpret_cast<PIMAGE_EXPORT_DIRECTORY>(base + dir.VirtualAddress);
-	if (exp->NumberOfNames < 40) return false;
+	if (exp->NumberOfNames < 20) return false;
 
 	auto* names = reinterpret_cast<DWORD*>(base + exp->AddressOfNames);
 	for (DWORD i = 0; i < exp->NumberOfNames; ++i) {
@@ -187,6 +187,14 @@ static const uint8_t kIteratorPrologueM[] = { 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF
 // Distinguishes class_get_fields vs class_get_methods (cmp word ptr [rbx+imm], 0).
 static const uint8_t kFieldsMarker[]  = { 0x66,0x83,0xBB,0x24,0x01,0x00,0x00 };
 static const uint8_t kMethodsMarker[] = { 0x66,0x83,0xBB,0x20,0x01,0x00,0x00 };
+static const uint8_t kNestedMarker[]  = { 0x66,0x83,0xBB,0x1C,0x01,0x00,0x00 };
+static const uint8_t kIfaceMarker[]   = { 0x66,0x83,0xBB,0x18,0x01,0x00,0x00 };
+
+static const uint8_t kDomainGetAlt[]  = { 0x48,0x8B,0x05,0,0,0,0,0x48,0x85,0xC0,0x74 };
+static const uint8_t kDomainGetAltM[] = { 0xFF,0xFF,0xFF,0,0,0,0,0xFF,0xFF,0xFF,0xFF };
+
+static const uint8_t kFree[]  = { 0x48,0x89,0x5C,0x24,0x08,0x57,0x48,0x83,0xEC,0x20,0x48,0x8B,0xD9 };
+static const uint8_t kFreeM[] = { 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF };
 
 struct ApiPattern {
 	const char* api;
@@ -213,6 +221,7 @@ static const ApiPattern kSimplePatterns[] = {
 	{ "il2cpp_field_get_flags",         { PAT(kFieldFlags) } },
 	{ "il2cpp_method_get_flags",        { PAT(kMethodFlags) } },
 	{ "il2cpp_method_get_param",        { PAT(kMethodParam) } },
+	{ "il2cpp_free",                    { PAT(kFree) } },
 };
 
 void BuildMap(const char* module_name) {
@@ -224,12 +233,17 @@ void BuildMap(const char* module_name) {
 	const BytePat mov_rax_rcx{ PAT(kMovRaxRcx) };
 	const BytePat at_rcx_18{ PAT(kAtRcx18) };
 	const BytePat iterator{ PAT(kIteratorPrologue) };
+	const BytePat domain_alt{ PAT(kDomainGetAlt) };
 
 	for (uint8_t* body : bodies) {
 		for (const auto& entry : kSimplePatterns) {
 			if (MatchBytes(body, kMatchWindow, entry.pat)) {
 				MapFirst(entry.api, body);
 			}
+		}
+
+		if (MatchBytes(body, kMatchWindow, domain_alt)) {
+			MapFirst("il2cpp_domain_get", body);
 		}
 
 		// Shared tiny getters used by multiple APIs with identical layout offsets.
@@ -248,6 +262,12 @@ void BuildMap(const char* module_name) {
 			}
 			if (ContainsBytes(body, kMatchWindow, kMethodsMarker, sizeof(kMethodsMarker))) {
 				MapFirst("il2cpp_class_get_methods", body);
+			}
+			if (ContainsBytes(body, kMatchWindow, kNestedMarker, sizeof(kNestedMarker))) {
+				MapFirst("il2cpp_class_get_nested_types", body);
+			}
+			if (ContainsBytes(body, kMatchWindow, kIfaceMarker, sizeof(kIfaceMarker))) {
+				MapFirst("il2cpp_class_get_interfaces", body);
 			}
 		}
 	}
@@ -329,6 +349,28 @@ void FillFromMap(void** slot, const char* api) {
 	if (void* fn = Resolve(nullptr, api)) *slot = fn;
 }
 
+bool ShouldTryRecovery(HMODULE mod) {
+	if (!mod) {
+		return false;
+	}
+	if (ModuleLooksRenamed(mod)) {
+		return true;
+	}
+	if (GetProcAddress(mod, "il2cpp_domain_get")) {
+		return false;
+	}
+
+	auto* base = reinterpret_cast<uint8_t*>(mod);
+	auto* dos = reinterpret_cast<PIMAGE_DOS_HEADER>(base);
+	auto* nt = reinterpret_cast<PIMAGE_NT_HEADERS>(base + dos->e_lfanew);
+	const auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+	if (!dir.VirtualAddress) {
+		return false;
+	}
+	auto* exp = reinterpret_cast<PIMAGE_EXPORT_DIRECTORY>(base + dir.VirtualAddress);
+	return exp->NumberOfNames >= 20;
+}
+
 } // namespace
 
 bool DetectAndEnable(const char* module_name) {
@@ -336,11 +378,13 @@ bool DetectAndEnable(const char* module_name) {
 	g_map.clear();
 
 	HMODULE mod = GetModuleHandleA(module_name);
-	if (!mod || !ModuleLooksRenamed(mod)) return false;
+	if (!mod || !ShouldTryRecovery(mod)) {
+		return false;
+	}
 
 	g_active = true;
 	BuildMap(module_name);
-	return true;
+	return !g_map.empty();
 }
 
 bool Active() { return g_active; }
@@ -396,6 +440,9 @@ void InstallFallbacks(ApiSlots& slots) {
 	FillFromMap(slots.is_class_valuetype, "il2cpp_class_is_valuetype");
 	FillFromMap(slots.is_class_generic, "il2cpp_class_is_generic");
 	FillFromMap(slots.is_method_instance, "il2cpp_method_is_instance");
+	FillFromMap(slots.get_class_nested_types, "il2cpp_class_get_nested_types");
+	FillFromMap(slots.get_class_interfaces, "il2cpp_class_get_interfaces");
+	FillFromMap(slots.free_memory, "il2cpp_free");
 
 	g_get_fields = slots.get_fields ? reinterpret_cast<FnGetFields>(*slots.get_fields) : nullptr;
 	g_get_field_name = slots.get_field_name ? reinterpret_cast<FnGetFieldName>(*slots.get_field_name) : nullptr;
@@ -412,9 +459,11 @@ void InstallFallbacks(ApiSlots& slots) {
 	SetIfEmpty(slots.get_class_by_name, reinterpret_cast<void*>(&ShimClassFromName));
 	SetIfEmpty(slots.free_memory, reinterpret_cast<void*>(&ShimFree));
 	SetIfEmpty(slots.get_method_param_name, reinterpret_cast<void*>(&ShimEmptyParamName));
-	SetIfEmpty(slots.get_class_interfaces, reinterpret_cast<void*>(&ShimEmptyIter));
 	SetIfEmpty(slots.get_class_nested_types, reinterpret_cast<void*>(&ShimEmptyIter));
-	SetIfEmpty(slots.is_class_generic, reinterpret_cast<void*>(&ShimFalse));
+	SetIfEmpty(slots.get_class_interfaces, reinterpret_cast<void*>(&ShimEmptyIter));
+	if (!slots.is_class_generic || !*slots.is_class_generic) {
+		SetIfEmpty(slots.is_class_generic, reinterpret_cast<void*>(&ShimFalse));
+	}
 }
 
 } // namespace renamed_exports

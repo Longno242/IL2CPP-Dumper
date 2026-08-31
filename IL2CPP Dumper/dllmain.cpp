@@ -4,16 +4,49 @@
 #include <string>
 #include <cstdio>
 #include "dumper.h"
+#include "rrid.hpp"
+#include "experimental/runtime_config.h"
+#include "experimental/module_discovery.h"
 
 static HMODULE g_hModule = nullptr;
 
 static DWORD WINAPI DumpThread(LPVOID) {
-    char desktop[MAX_PATH] = {};
-    HRESULT hr = SHGetFolderPathA(nullptr, CSIDL_DESKTOP, nullptr, SHGFP_TYPE_CURRENT, desktop);
+    runtime_config::apply();
 
-    std::string dir = SUCCEEDED(hr)
-        ? std::string(desktop) + "\\GameDump"
-        : "C:\\GameDump";
+    if (!runtime_config::module_name_override().empty()) {
+        rrid::set_module_name(runtime_config::module_name_override());
+        printf("[*] module override: %s\n", rrid::get_module_name().c_str());
+    }
+
+    if (!GetModuleHandleA(rrid::get_module_name().c_str())) {
+        if (rrid::auto_detect_module()) {
+            printf("[*] auto-detected module: %s\n", rrid::get_module_name().c_str());
+        } else {
+            const auto candidates = module_discovery::scan_loaded_modules();
+            if (!candidates.empty()) {
+                printf("[*] IL2CPP candidates:\n");
+                for (const auto& c : candidates) {
+                    printf("    %s (score %d%s%s%s)\n",
+                        c.name.c_str(),
+                        c.score,
+                        c.has_domain_get ? ", domain_get" : "",
+                        c.has_il2cpp_exports ? ", il2cpp exports" : "",
+                        c.looks_renamed ? ", renamed" : "");
+                }
+            }
+        }
+    }
+
+    std::string dir;
+    if (!runtime_config::dump_output_dir().empty()) {
+        dir = runtime_config::dump_output_dir();
+    } else {
+        char desktop[MAX_PATH] = {};
+        HRESULT hr = SHGetFolderPathA(nullptr, CSIDL_DESKTOP, nullptr, SHGFP_TYPE_CURRENT, desktop);
+        dir = SUCCEEDED(hr)
+            ? std::string(desktop) + "\\GameDump"
+            : "C:\\GameDump";
+    }
 
     const bool ok = GameDumper::DumpAll(dir);
 
