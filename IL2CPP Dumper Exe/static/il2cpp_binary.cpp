@@ -42,6 +42,9 @@ enum Il2CppTypeEnum : uint8_t {
 const uint8_t kMscorlibFeature[] = {
     'm','s','c','o','r','l','i','b','.','d','l','l',0
 };
+const uint8_t kUnityCoreFeature[] = {
+    'U','n','i','t','y','E','n','g','i','n','e','.','C','o','r','e','M','o','d','u','l','e','.','d','l','l',0
+};
 
 std::vector<size_t> FindPattern(const uint8_t* hay, size_t hayLen, const uint8_t* needle, size_t nlen) {
     std::vector<size_t> hits;
@@ -53,6 +56,15 @@ std::vector<size_t> FindPattern(const uint8_t* hay, size_t hayLen, const uint8_t
 }
 
 } // namespace
+
+static SearchSection MakeSearchSection(uint64_t imageBase, const PeSection& s) {
+    SearchSection ss;
+    ss.offset = s.PointerToRawData;
+    ss.offsetEnd = s.PointerToRawData + s.SizeOfRawData;
+    ss.address = imageBase + s.VirtualAddress;
+    ss.addressEnd = imageBase + s.VirtualAddress + std::max(s.VirtualSize, s.SizeOfRawData);
+    return ss;
+}
 
 Il2CppBinary::Il2CppBinary(std::vector<uint8_t> buf) : BinaryStream(std::move(buf)) {
     ParsePE();
@@ -127,16 +139,32 @@ void Il2CppBinary::ParsePE() {
         s.Characteristics = ReadU32();
         sections.push_back(s);
 
-        SearchSection ss;
-        ss.offset = s.PointerToRawData;
-        ss.offsetEnd = s.PointerToRawData + s.SizeOfRawData;
-        ss.address = ImageBase + s.VirtualAddress;
-        ss.addressEnd = ImageBase + s.VirtualAddress + s.VirtualSize;
-
-        if (s.Characteristics == 0x60000020) {
+        if (s.SizeOfRawData == 0 || s.PointerToRawData == 0) continue;
+        SearchSection ss = MakeSearchSection(ImageBase, s);
+        const uint32_t c = s.Characteristics;
+        const bool executable = (c & 0x20000000u) != 0;
+        const bool readable = (c & 0x40000000u) != 0;
+        if (executable) {
             execSecs.push_back(ss);
-        } else if (s.Characteristics == 0x40000040 || s.Characteristics == 0xC0000040) {
+        } else if (readable || (c & 0x00000040u) != 0) {
             dataSecs.push_back(ss);
+        }
+    }
+
+    if (dataSecs.empty() || execSecs.empty()) {
+        for (const auto& s : sections) {
+            if (s.SizeOfRawData == 0 || s.PointerToRawData == 0) continue;
+            SearchSection ss = MakeSearchSection(ImageBase, s);
+            const bool executable = (s.Characteristics & 0x20000000u) != 0;
+            if (executable) {
+                if (execSecs.empty()) execSecs.push_back(ss);
+            } else {
+                bool already = false;
+                for (const auto& d : dataSecs) {
+                    if (d.offset == ss.offset) { already = true; break; }
+                }
+                if (!already) dataSecs.push_back(ss);
+            }
         }
     }
 }
@@ -167,6 +195,17 @@ bool Il2CppBinary::InDataVa(uint64_t va) const {
     return false;
 }
 
+bool Il2CppBinary::InMappedVa(uint64_t va) const {
+    if (InDataVa(va) || InExecVa(va)) return true;
+    for (const auto& s : sections) {
+        if (s.SizeOfRawData == 0) continue;
+        const uint64_t a = ImageBase + s.VirtualAddress;
+        const uint64_t e = a + std::max(s.VirtualSize, s.SizeOfRawData);
+        if (va >= a && va < e) return true;
+    }
+    return false;
+}
+
 bool Il2CppBinary::CheckPointerRangeExecVa(const std::vector<uint64_t>& ptrs) const {
     for (auto p : ptrs) if (p && !InExecVa(p)) return false;
     return true;
@@ -177,17 +216,49 @@ bool Il2CppBinary::CheckPointerRangeDataVa(const std::vector<uint64_t>& ptrs) co
     return true;
 }
 
+bool Il2CppBinary::CheckPointerRangeMappedVa(const std::vector<uint64_t>& ptrs) const {
+    size_t ok = 0, total = 0;
+    for (auto p : ptrs) {
+        if (!p) continue;
+        ++total;
+        if (InMappedVa(p)) ++ok;
+    }
+    if (total == 0) return false;
+    return ok * 2 >= total;
+}
+
 bool Il2CppBinary::CheckPointerRangeDataRa(uint64_t fileOff) const {
     for (const auto& s : dataSecs) {
         if (fileOff >= s.offset && fileOff < s.offsetEnd) return true;
     }
+    for (const auto& s : sections) {
+        if (s.SizeOfRawData == 0) continue;
+        if (fileOff >= s.PointerToRawData && fileOff < s.PointerToRawData + s.SizeOfRawData) return true;
+    }
     return false;
+}
+
+std::vector<SearchSection> Il2CppBinary::SearchableSections() const {
+    std::vector<SearchSection> out = dataSecs;
+    for (const auto& s : execSecs) {
+        bool already = false;
+        for (const auto& d : out) {
+            if (d.offset == s.offset) { already = true; break; }
+        }
+        if (!already) out.push_back(s);
+    }
+    if (!out.empty()) return out;
+    for (const auto& s : sections) {
+        if (s.SizeOfRawData == 0 || s.PointerToRawData == 0) continue;
+        out.push_back(MakeSearchSection(ImageBase, s));
+    }
+    return out;
 }
 
 std::vector<uint64_t> Il2CppBinary::FindReferences(uint64_t va) const {
     std::vector<uint64_t> refs;
     const size_t step = PointerSize();
-    for (const auto& sec : dataSecs) {
+    for (const auto& sec : SearchableSections()) {
         if (sec.offsetEnd <= sec.offset) continue;
         const uint64_t end = std::min(sec.offsetEnd, static_cast<uint64_t>(data.size()));
         for (uint64_t off = sec.offset; off + step <= end; off += step) {
@@ -209,7 +280,7 @@ std::vector<uint64_t> Il2CppBinary::FindReferences(uint64_t va) const {
 
 uint64_t Il2CppBinary::FindCodeRegistrationOld(int methodCount) {
     const size_t step = PointerSize();
-    for (const auto& section : dataSecs) {
+    for (const auto& section : SearchableSections()) {
         for (uint64_t addr = section.offset; addr + step <= section.offsetEnd; addr += step) {
             Position = static_cast<size_t>(addr);
             try {
@@ -220,7 +291,7 @@ uint64_t Il2CppBinary::FindCodeRegistrationOld(int methodCount) {
                 std::vector<uint64_t> pointers;
                 pointers.reserve(methodCount);
                 for (int i = 0; i < methodCount; ++i) pointers.push_back(ReadUIntPtr());
-                if (CheckPointerRangeExecVa(pointers)) {
+                if (CheckPointerRangeExecVa(pointers) || CheckPointerRangeMappedVa(pointers)) {
                     return addr - section.offset + section.address;
                 }
             } catch (...) {
@@ -231,35 +302,34 @@ uint64_t Il2CppBinary::FindCodeRegistrationOld(int methodCount) {
     return 0;
 }
 
-uint64_t Il2CppBinary::FindCodeRegistration2019(const std::vector<SearchSection>& secs, int imageCount, double ver) {
+uint64_t Il2CppBinary::FindCodeRegistration2019(const std::vector<SearchSection>& secs, int imageCount, double ver,
+                                                 const uint8_t* feature, size_t featureLen) {
     for (const auto& sec : secs) {
         if (sec.offsetEnd <= sec.offset) continue;
         const size_t len = static_cast<size_t>(sec.offsetEnd - sec.offset);
         if (sec.offset + len > data.size()) continue;
-        auto hits = FindPattern(data.data() + sec.offset, len, kMscorlibFeature, sizeof(kMscorlibFeature));
+        auto hits = FindPattern(data.data() + sec.offset, len, feature, featureLen);
         for (size_t index : hits) {
             const uint64_t dllva = sec.address + index;
             for (uint64_t refva : FindReferences(dllva)) {
                 for (uint64_t refva2 : FindReferences(refva)) {
-                    if (ver >= 27.0) {
-                        for (int i = imageCount - 1; i >= 0; --i) {
-                            const uint64_t maybeModules = refva2 - static_cast<uint64_t>(i) * PointerSize();
-                            for (uint64_t refva3 : FindReferences(maybeModules)) {
+                    for (int i = imageCount - 1; i >= 0; --i) {
+                        const uint64_t maybeModules = refva2 - static_cast<uint64_t>(i) * PointerSize();
+                        for (uint64_t refva3 : FindReferences(maybeModules)) {
+                            std::vector<int> backs;
+                            if (ver >= 35.0) backs = {16, 15, 14};
+                            else if (ver >= 29.0) backs = {14, 15, 13, 16};
+                            else if (ver >= 27.0) backs = {13, 14, 12, 15};
+                            else backs = {13, 14, 12, 15, 16, 11};
+                            for (int back : backs) {
                                 try {
                                     Position = static_cast<size_t>(MapVATR(refva3 - PointerSize()));
-                                    if (ReadIntPtr() == imageCount) {
-                                        if (ver >= 35.0) return refva3 - PointerSize() * 16;
-                                        if (ver >= 29.0) return refva3 - PointerSize() * 14;
-                                        return refva3 - PointerSize() * 13;
-                                    }
+                                    if (ReadIntPtr() != imageCount) continue;
+                                    const uint64_t candidate = refva3 - PointerSize() * static_cast<uint64_t>(back);
+                                    if (MapVATR(candidate) == 0) continue;
+                                    return candidate;
                                 } catch (...) {
                                 }
-                            }
-                        }
-                    } else {
-                        for (int i = 0; i < imageCount; ++i) {
-                            for (uint64_t refva3 : FindReferences(refva2 - static_cast<uint64_t>(i) * PointerSize())) {
-                                return refva3 - PointerSize() * 13;
                             }
                         }
                     }
@@ -270,9 +340,49 @@ uint64_t Il2CppBinary::FindCodeRegistration2019(const std::vector<SearchSection>
     return 0;
 }
 
+uint64_t Il2CppBinary::FindCodeRegistration2019Any(const Metadata& meta, const std::vector<SearchSection>& secs, bool& pointerInExec) {
+    pointerInExec = false;
+    const int imageCount = static_cast<int>(meta.images.size());
+    if (imageCount <= 0) return 0;
+
+    struct Feat { const uint8_t* bytes; size_t len; };
+    std::vector<Feat> features;
+    features.push_back({kMscorlibFeature, sizeof(kMscorlibFeature)});
+    features.push_back({kUnityCoreFeature, sizeof(kUnityCoreFeature)});
+
+    std::vector<std::string> nameBlobs;
+    for (size_t i = 0; i < meta.images.size() && i < 8; ++i) {
+        std::string n = meta.GetString(meta.images[i].nameIndex);
+        if (n.empty()) continue;
+        n.push_back('\0');
+        nameBlobs.push_back(std::move(n));
+    }
+    for (const auto& n : nameBlobs) {
+        features.push_back({reinterpret_cast<const uint8_t*>(n.data()), n.size()});
+    }
+
+    auto trySecs = [&](const std::vector<SearchSection>& set, bool inExec) -> uint64_t {
+        for (const auto& f : features) {
+            uint64_t cr = FindCodeRegistration2019(set, imageCount, Version, f.bytes, f.len);
+            if (cr) {
+                pointerInExec = inExec;
+                return cr;
+            }
+        }
+        return 0;
+    };
+
+    uint64_t cr = trySecs(secs, false);
+    if (cr) return cr;
+    cr = trySecs(execSecs, true);
+    if (cr) return cr;
+    return trySecs(SearchableSections(), false);
+}
+
 uint64_t Il2CppBinary::FindMetadataRegistrationOld(int typeDefinitionsCount, long usagesCount) {
     const size_t step = PointerSize();
-    for (const auto& section : dataSecs) {
+    for (const auto& section : SearchableSections()) {
+        if (section.offsetEnd <= section.offset + step) continue;
         const uint64_t end = std::min(section.offsetEnd, static_cast<uint64_t>(data.size())) - step;
         for (uint64_t addr = section.offset; addr < end; addr += step) {
             Position = static_cast<size_t>(addr);
@@ -285,7 +395,6 @@ uint64_t Il2CppBinary::FindMetadataRegistrationOld(int typeDefinitionsCount, lon
                 std::vector<uint64_t> pointers;
                 pointers.reserve(static_cast<size_t>(usagesCount));
                 for (long i = 0; i < usagesCount; ++i) pointers.push_back(ReadUIntPtr());
-                // BSS check softened: accept any non-exec pointers
                 bool ok = true;
                 for (auto p : pointers) {
                     if (p && InExecVa(p)) { ok = false; break; }
@@ -300,7 +409,8 @@ uint64_t Il2CppBinary::FindMetadataRegistrationOld(int typeDefinitionsCount, lon
 
 uint64_t Il2CppBinary::FindMetadataRegistrationV21(int typeDefinitionsCount, bool pointerInExec) {
     const size_t step = PointerSize();
-    for (const auto& section : dataSecs) {
+    for (const auto& section : SearchableSections()) {
+        if (section.offsetEnd <= section.offset + step) continue;
         const uint64_t end = std::min(section.offsetEnd, static_cast<uint64_t>(data.size())) - step;
         for (uint64_t addr = section.offset; addr < end; addr += step) {
             Position = static_cast<size_t>(addr);
@@ -314,7 +424,8 @@ uint64_t Il2CppBinary::FindMetadataRegistrationV21(int typeDefinitionsCount, boo
                 std::vector<uint64_t> pointers;
                 pointers.reserve(typeDefinitionsCount);
                 for (int i = 0; i < typeDefinitionsCount; ++i) pointers.push_back(ReadUIntPtr());
-                const bool flag = pointerInExec ? CheckPointerRangeExecVa(pointers) : CheckPointerRangeDataVa(pointers);
+                bool flag = pointerInExec ? CheckPointerRangeExecVa(pointers) : CheckPointerRangeDataVa(pointers);
+                if (!flag) flag = CheckPointerRangeMappedVa(pointers);
                 if (flag) return addr - PointerSize() * 10 - section.offset + section.address;
             } catch (...) {
             }
@@ -326,12 +437,7 @@ uint64_t Il2CppBinary::FindMetadataRegistrationV21(int typeDefinitionsCount, boo
 uint64_t Il2CppBinary::FindCodeRegistration(const Metadata& meta, bool& pointerInExec) {
     pointerInExec = false;
     if (Version >= 24.2) {
-        uint64_t cr = FindCodeRegistration2019(dataSecs, static_cast<int>(meta.images.size()), Version);
-        if (cr == 0) {
-            cr = FindCodeRegistration2019(execSecs, static_cast<int>(meta.images.size()), Version);
-            if (cr) pointerInExec = true;
-        }
-        return cr;
+        return FindCodeRegistration2019Any(meta, dataSecs, pointerInExec);
     }
     return FindCodeRegistrationOld(static_cast<int>(meta.methodDefs.size()));
 }
@@ -430,14 +536,24 @@ Il2CppBinary::MetaReg Il2CppBinary::ReadMetadataRegistration(uint64_t va) {
 }
 
 bool Il2CppBinary::PlusSearch(Metadata& meta) {
+    last_error_.clear();
     Version = meta.version;
     bool pointerInExec = false;
     uint64_t codeRegistration = FindCodeRegistration(meta, pointerInExec);
-    uint64_t metadataRegistration = FindMetadataRegistration(meta, pointerInExec);
-    if (codeRegistration == 0 || (Version >= 19.0 && metadataRegistration == 0)) {
+    if (codeRegistration == 0) {
+        last_error_ = "CodeRegistration not found in binary (section layout or Unity version may be unsupported)";
         return false;
     }
-    return InitRegistrations(codeRegistration, metadataRegistration, meta);
+    uint64_t metadataRegistration = FindMetadataRegistration(meta, pointerInExec);
+    if (Version >= 19.0 && metadataRegistration == 0) {
+        last_error_ = "MetadataRegistration not found in binary (try runtime DLL if tables are only filled at runtime)";
+        return false;
+    }
+    if (!InitRegistrations(codeRegistration, metadataRegistration, meta)) {
+        last_error_ = "registrations located but type/method tables are empty or invalid";
+        return false;
+    }
+    return true;
 }
 
 bool Il2CppBinary::InitRegistrations(uint64_t codeRegistration, uint64_t metadataRegistration, Metadata& meta) {

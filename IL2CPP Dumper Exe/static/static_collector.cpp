@@ -395,7 +395,9 @@ bool Collect(const std::string& assembly_path,
         Il2CppBinary bin(ReadFileBytes(assembly_path));
         say("[*] searching CodeRegistration / MetadataRegistration...");
         if (!bin.PlusSearch(meta)) {
-            error_out = "failed to locate IL2CPP registrations in binary (unsupported packer or encrypted metadata)";
+            error_out = bin.LastError().empty()
+                ? "failed to locate IL2CPP registrations in binary"
+                : bin.LastError();
             return false;
         }
         say("[+] registrations ready (effective version " + std::to_string(bin.Version) + ")");

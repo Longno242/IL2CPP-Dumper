@@ -44,6 +44,7 @@ Typical uses: understanding your own Unity IL2CPP builds, generating reference h
 - Runtime init retries until IL2CPP is ready; auto-detects `GameAssembly.dll` / `UserAssembly.dll` and other IL2CPP modules.
 - Export resolution: `GetProcAddress` → PE/table scan → UnityPlayer scan → experimental renamed-export patterns.
 - Static EXE for unencrypted on-disk metadata (metadata versions supported by the parser).
+- Static EXE GUI (drag-drop) + GitHub release check / self-update.
 - C++20, Win32 only — no third-party runtime dependencies.
 
 ## Runtime vs static
@@ -88,9 +89,17 @@ Pre-built binaries: [GitHub releases](https://github.com/Longno242/IL2CPP-Dumper
 
 ### Static EXE
 
+Double-click `dumper.exe` for the grey/black GUI:
+- Drop `GameAssembly.dll` (or a game folder) into the top zone
+- Drop `global-metadata.dat` into the second zone
+- Click **Start Dump**
+- **Check Update** queries GitHub releases and can download/replace the EXE
+
+CLI (optional):
+
 ```
-dumper.exe <GameAssembly.dll> <global-metadata.dat> [output-dir]
-dumper.exe <game-folder>
+dumper.exe --cli <GameAssembly.dll> <global-metadata.dat> [output-dir]
+dumper.exe --cli <game-folder>
 ```
 
 If metadata on disk is encrypted, use the runtime DLL instead.

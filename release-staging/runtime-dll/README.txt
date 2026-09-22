@@ -1,4 +1,4 @@
-﻿IL2CPP Dumper runtime DLL (v1.4.0)
+﻿IL2CPP Dumper runtime DLL (v1.4.1)
 
 1. Launch the application and wait for IL2CPP to initialize
 2. Load dumper.dll into the process

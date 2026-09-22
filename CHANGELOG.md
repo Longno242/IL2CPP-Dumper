@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here.
 
+## [v1.4.1] - 2026-09-22
+
+### Added
+- **Static EXE GUI** — custom grey/black Win32 UI (not ImGui): drag-drop assembly + metadata, Start Dump, log pane.
+- **Check Update** — queries GitHub releases, can download the static zip and self-replace `dumper.exe`.
+- CLI still available: `dumper.exe --cli <files…>`
+
+### Fixed (static EXE)
+- **PE section matching** — classify sections by flag masks instead of exact Characteristic values (fixes empty search lists on many normal Unity builds).
+- **Registration discovery** — search more sections, try `mscorlib` / `UnityEngine.CoreModule` / image-name anchors, try multiple CodeRegistration layouts, soften pointer-range checks.
+- **Folder discovery** — recursive `GameAssembly.dll` / `UserAssembly.dll` search and deeper `*_Data/il2cpp_data/Metadata` layouts.
+- **Error messages** — report CodeRegistration vs MetadataRegistration failures instead of always blaming encryption.
+
 ## [v1.4.0] - 2026-09-01
 
 ### Added

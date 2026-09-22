@@ -55,6 +55,7 @@ public:
 
     bool PlusSearch(Metadata& meta);
     bool InitRegistrations(uint64_t codeRegistration, uint64_t metadataRegistration, Metadata& meta);
+    const std::string& LastError() const { return last_error_; }
 
     uint64_t GetMethodPointer(const std::string& imageName, const MethodDef& method) const;
     uint64_t GetMethodRVA(const std::string& imageName, const MethodDef& method) const;
@@ -66,10 +67,16 @@ private:
     uint64_t FindCodeRegistration(const Metadata& meta, bool& pointerInExec);
     uint64_t FindMetadataRegistration(const Metadata& meta, bool pointerInExec);
     uint64_t FindCodeRegistrationOld(int methodCount);
-    uint64_t FindCodeRegistration2019(const std::vector<SearchSection>& secs, int imageCount, double ver);
+    uint64_t FindCodeRegistration2019(const std::vector<SearchSection>& secs, int imageCount, double ver,
+                                      const uint8_t* feature, size_t featureLen);
+    uint64_t FindCodeRegistration2019Any(const Metadata& meta, const std::vector<SearchSection>& secs, bool& pointerInExec);
     uint64_t FindMetadataRegistrationOld(int typeDefinitionsCount, long usagesCount);
     uint64_t FindMetadataRegistrationV21(int typeDefinitionsCount, bool pointerInExec);
     std::vector<uint64_t> FindReferences(uint64_t va) const;
+    std::vector<SearchSection> SearchableSections() const;
+    bool InMappedVa(uint64_t va) const;
+    bool CheckPointerRangeMappedVa(const std::vector<uint64_t>& ptrs) const;
+    std::string last_error_;
     bool CheckPointerRangeExecVa(const std::vector<uint64_t>& ptrs) const;
     bool CheckPointerRangeDataVa(const std::vector<uint64_t>& ptrs) const;
     bool CheckPointerRangeDataRa(uint64_t fileOff) const;
