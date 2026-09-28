@@ -25,9 +25,9 @@ std::wstring Utf8ToWide(const std::string& s) {
     return w;
 }
 
-std::string JsonStringField(const std::string& json, const std::string& key) {
+std::string JsonStringFieldAt(const std::string& json, size_t from, const std::string& key) {
     const std::string needle = "\"" + key + "\"";
-    size_t p = json.find(needle);
+    size_t p = json.find(needle, from);
     if (p == std::string::npos) return {};
     p = json.find(':', p + needle.size());
     if (p == std::string::npos) return {};
@@ -39,7 +39,7 @@ std::string JsonStringField(const std::string& json, const std::string& key) {
     while (p < json.size() && json[p] != '"') {
         if (json[p] == '\\' && p + 1 < json.size()) {
             ++p;
-            if (json[p] == 'u') p += 4;
+            if (json[p] == 'u' && p + 4 < json.size()) p += 4;
             else out.push_back(json[p]);
         } else {
             out.push_back(json[p]);
@@ -47,6 +47,10 @@ std::string JsonStringField(const std::string& json, const std::string& key) {
         ++p;
     }
     return out;
+}
+
+std::string JsonStringField(const std::string& json, const std::string& key) {
+    return JsonStringFieldAt(json, 0, key);
 }
 
 int CompareVersion(std::string a, std::string b) {
@@ -179,28 +183,39 @@ bool HttpGetUrl(const std::string& url, std::string& body, std::string& err,
                    uc.nScheme == INTERNET_SCHEME_HTTPS, body, err, progress);
 }
 
+std::string FileNameFromUrl(const std::string& url) {
+    size_t slash = url.find_last_of('/');
+    if (slash == std::string::npos) return "dumper-update.zip";
+    std::string name = url.substr(slash + 1);
+    size_t q = name.find('?');
+    if (q != std::string::npos) name = name.substr(0, q);
+    return name.empty() ? "dumper-update.zip" : name;
+}
+
 void PickStaticAsset(const std::string& json, std::string& nameOut, std::string& urlOut) {
     nameOut.clear();
     urlOut.clear();
     size_t pos = 0;
     int bestScore = -1;
+
     while (true) {
-        size_t a = json.find("\"browser_download_url\"", pos);
-        if (a == std::string::npos) break;
-        size_t objStart = json.rfind('{', a);
-        size_t objEnd = json.find('}', a);
-        if (objStart == std::string::npos || objEnd == std::string::npos) {
-            pos = a + 1;
+        size_t urlKey = json.find("\"browser_download_url\"", pos);
+        if (urlKey == std::string::npos) break;
+
+        std::string url = JsonStringFieldAt(json, urlKey, "browser_download_url");
+        if (url.empty()) {
+            pos = urlKey + 1;
             continue;
         }
 
-        std::string chunk = json.substr(objStart, objEnd - objStart + 1);
-        std::string name = JsonStringField(chunk, "name");
-        std::string url = JsonStringField(chunk, "browser_download_url");
-        if (name.empty() || url.empty()) {
-            pos = a + 1;
-            continue;
-        }
+        // Look backwards for the asset "name" — do not brace-match (uploader nests {}).
+        std::string name;
+        const size_t back = urlKey > 2000 ? urlKey - 2000 : 0;
+        size_t nameKey = json.rfind("\"name\"", urlKey);
+        if (nameKey != std::string::npos && nameKey >= back)
+            name = JsonStringFieldAt(json, nameKey, "name");
+        if (name.empty())
+            name = FileNameFromUrl(url);
 
         std::string lower = name;
         for (char& c : lower) c = (char)std::tolower((unsigned char)c);
@@ -218,8 +233,14 @@ void PickStaticAsset(const std::string& json, std::string& nameOut, std::string&
             nameOut = name;
             urlOut = url;
         }
-        pos = a + 1;
+        pos = urlKey + 1;
     }
+}
+
+std::string BuildFallbackStaticUrl(const std::string& tag) {
+    // https://github.com/.../releases/download/v1.4.3/dumper-v1.4.3-static-exe.zip
+    return std::string("https://github.com/") + DUMPER_REPO_OWNER + "/" + DUMPER_REPO_NAME +
+           "/releases/download/" + tag + "/dumper-" + tag + "-static-exe.zip";
 }
 
 } // namespace
@@ -246,6 +267,11 @@ UpdateInfo CheckForUpdate() {
         return info;
     }
 
+    if (info.asset_url.empty()) {
+        info.asset_name = "dumper-" + info.latest_tag + "-static-exe.zip";
+        info.asset_url = BuildFallbackStaticUrl(info.latest_tag);
+    }
+
     info.update_available = CompareVersion(info.current_version, info.latest_tag) < 0;
     return info;
 }
@@ -255,6 +281,8 @@ std::string DownloadUpdateAsset(const std::string& url, const std::string& dest_
     std::string body, err;
     if (!HttpGetUrl(url, body, err, progress))
         return err.empty() ? "download failed" : err;
+    if (body.size() < 64)
+        return "download too small (got " + std::to_string(body.size()) + " bytes)";
 
     std::ofstream out(dest_path, std::ios::binary);
     if (!out) return "cannot write " + dest_path;
@@ -271,19 +299,52 @@ bool LaunchSelfReplace(const std::string& new_exe_path, std::string& error_out) 
     }
 
     const fs::path self = selfPath;
-    const fs::path bat = self.parent_path() / "dumper_update.bat";
+    const fs::path dir = self.parent_path();
+    const fs::path bat = dir / "dumper_update.bat";
     const fs::path neu = fs::absolute(new_exe_path);
+
+    if (!fs::exists(neu)) {
+        error_out = "new exe missing: " + neu.string();
+        return false;
+    }
+
+    // Stage next to the running exe so the bat can always find it.
+    const fs::path staged = dir / "dumper.exe.new";
+    std::error_code ec;
+    fs::copy_file(neu, staged, fs::copy_options::overwrite_existing, ec);
+    if (ec) {
+        error_out = "cannot stage update: " + ec.message();
+        return false;
+    }
 
     std::ofstream out(bat);
     if (!out) {
         error_out = "cannot write updater script";
         return false;
     }
+
+    // Wait until this process releases the exe, then replace and relaunch.
     out << "@echo off\r\n"
-        << "timeout /t 2 /nobreak >nul\r\n"
-        << "copy /y \"" << neu.string() << "\" \"" << self.string() << "\" >nul\r\n"
-        << "start \"\" \"" << self.string() << "\"\r\n"
-        << "del \"%~f0\"\r\n";
+        << "setlocal\r\n"
+        << "set \"TARGET=" << self.string() << "\"\r\n"
+        << "set \"NEW=" << staged.string() << "\"\r\n"
+        << "set /a N=0\r\n"
+        << ":wait\r\n"
+        << "set /a N+=1\r\n"
+        << "if %N% GTR 30 goto fail\r\n"
+        << "timeout /t 1 /nobreak >nul\r\n"
+        << "del /f /q \"%TARGET%\" >nul 2>&1\r\n"
+        << "if exist \"%TARGET%\" goto wait\r\n"
+        << "copy /y \"%NEW%\" \"%TARGET%\" >nul\r\n"
+        << "if not exist \"%TARGET%\" goto fail\r\n"
+        << "del /f /q \"%NEW%\" >nul 2>&1\r\n"
+        << "start \"\" \"%TARGET%\"\r\n"
+        << "del \"%~f0\"\r\n"
+        << "exit /b 0\r\n"
+        << ":fail\r\n"
+        << "echo update failed > \"%~dp0dumper_update_error.txt\"\r\n"
+        << "del \"%~f0\"\r\n"
+        << "exit /b 1\r\n";
     out.close();
 
     STARTUPINFOW si{ sizeof(si) };
@@ -292,7 +353,7 @@ bool LaunchSelfReplace(const std::string& new_exe_path, std::string& error_out) 
     std::vector<wchar_t> buf(cmd.begin(), cmd.end());
     buf.push_back(0);
     if (!CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE,
-                        CREATE_NO_WINDOW, nullptr, self.parent_path().c_str(), &si, &pi)) {
+                        CREATE_NO_WINDOW, nullptr, dir.c_str(), &si, &pi)) {
         error_out = "failed to start updater script";
         return false;
     }

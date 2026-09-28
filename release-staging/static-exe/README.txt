@@ -1,4 +1,4 @@
-﻿IL2CPP Dumper static tool (v1.4.2)
+﻿IL2CPP Dumper static tool (v1.4.3)
 
 GUI: double-click dumper.exe
   - drop GameAssembly.dll + global-metadata.dat

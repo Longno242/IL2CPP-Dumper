@@ -382,9 +382,9 @@ void Paint(HWND hwnd) {
     DrawGhostBtn(mem, g.rcBrowseMeta, L"Browse", g.hover == ID_BTN_BROWSE_META, !g.dumping);
 
     const bool canDump = !g.dumping && !g.assembly.empty() && !g.metadata.empty();
-    DrawPrimaryBtn(mem, g.rcDump, g.dumping ? L"Dumping…" : L"Start Dump",
+    DrawPrimaryBtn(mem, g.rcDump, g.dumping ? L"Dumping..." : L"Start Dump",
                   g.hover == ID_BTN_DUMP, canDump);
-    DrawGhostBtn(mem, g.rcUpdate, g.updateBusy ? L"Checking…" : L"Updates",
+    DrawGhostBtn(mem, g.rcUpdate, g.updateBusy ? L"Checking..." : L"Updates",
                  g.hover == ID_BTN_UPDATE, !g.updateBusy);
     DrawGhostBtn(mem, g.rcOpenOut, L"Output", g.hover == ID_BTN_OPEN_OUT, true);
 
@@ -555,7 +555,7 @@ void StartUpdateCheck(bool offerDownload) {
     if (g.updateBusy) return;
     g.updateBusy = true;
     InvalidateRect(g.hwnd, nullptr, FALSE);
-    AppendLog(L"[*] checking GitHub releases…");
+    AppendLog(L"[*] checking GitHub releases...");
 
     std::thread([offerDownload]() {
         UpdateInfo info = CheckForUpdate();
@@ -580,34 +580,30 @@ void OfferUpdateDialog() {
     const UpdateInfo& info = g.lastUpdate;
     if (!info.update_available) return;
 
-    std::wstring msg = L"A newer release is available.\n\n"
+    std::wstring msg = L"A new update is available. Would you like to update?\n\n"
                        L"Current:  v" + Utf8ToWide(info.current_version) + L"\n"
-                       L"Latest:   " + Utf8ToWide(info.latest_tag) + L"\n\n";
-    if (!info.asset_name.empty()) {
-        msg += L"Asset: " + Utf8ToWide(info.asset_name) + L"\n\n";
-    }
-    msg += L"Download and prepare update?\n"
-           L"(The app will close and restart after replace.)\n\n"
-           L"Press No to open the releases page instead.";
+                       L"Latest:   " + Utf8ToWide(info.latest_tag) + L"\n\n"
+                       L"Yes = download and replace this exe (app will restart)\n"
+                       L"No  = open the releases page";
 
-    int r = MessageBoxW(g.hwnd, msg.c_str(), L"Update available", MB_YESNOCANCEL | MB_ICONINFORMATION);
-    if (r == IDCANCEL) return;
-    if (r == IDNO) {
-        ShellExecuteW(g.hwnd, L"open", Utf8ToWide(info.html_url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    int r = MessageBoxW(g.hwnd, msg.c_str(), L"Update available", MB_YESNO | MB_ICONINFORMATION);
+    if (r != IDYES) {
+        if (r == IDNO)
+            ShellExecuteW(g.hwnd, L"open", Utf8ToWide(info.html_url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         return;
     }
     if (info.asset_url.empty()) {
         ShellExecuteW(g.hwnd, L"open", Utf8ToWide(info.html_url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-        AppendLog(L"[!] no downloadable asset found — opened releases page");
+        AppendLog(L"[!] no downloadable asset found - opened releases page");
         return;
     }
 
     g.updateBusy = true;
     InvalidateRect(g.hwnd, nullptr, FALSE);
-    AppendLog(L"[*] downloading " + Utf8ToWide(info.asset_name) + L"…");
+    AppendLog(L"[*] downloading " + Utf8ToWide(info.asset_name.empty() ? info.asset_url : info.asset_name) + L"...");
 
     std::string url = info.asset_url;
-    std::string assetName = info.asset_name;
+    std::string assetName = info.asset_name.empty() ? "dumper-update.zip" : info.asset_name;
     std::thread([url, assetName]() {
         wchar_t tempDir[MAX_PATH]{};
         GetTempPathW(MAX_PATH, tempDir);
@@ -629,6 +625,7 @@ void OfferUpdateDialog() {
 
         fs::path extractDir = fs::path(tempDir) / L"il2cpp-dumper-update";
         std::error_code ec;
+        fs::remove_all(extractDir, ec);
         fs::create_directories(extractDir, ec);
         std::wstring ps =
             L"powershell -NoProfile -Command \"Expand-Archive -Force -Path '" +
@@ -650,11 +647,24 @@ void OfferUpdateDialog() {
             if (!ent.is_regular_file(ec)) continue;
             auto n = ent.path().filename().wstring();
             for (auto& c : n) c = (wchar_t)towlower(c);
-            if (n == L"dumper.exe") { found = ent.path(); break; }
+            if (n == L"dumper.exe" || n == L"il2cppdumper.exe" ||
+                n == L"il2cppdumper-static.exe") {
+                found = ent.path();
+                break;
+            }
+        }
+        if (found.empty()) {
+            for (auto& ent : fs::recursive_directory_iterator(extractDir, ec)) {
+                if (ec) break;
+                if (!ent.is_regular_file(ec)) continue;
+                auto ext = ent.path().extension().wstring();
+                for (auto& c : ext) c = (wchar_t)towlower(c);
+                if (ext == L".exe") { found = ent.path(); break; }
+            }
         }
 
         if (found.empty()) {
-            AppendLog(L"[!] dumper.exe not found in zip — opening folder");
+            AppendLog(L"[!] dumper.exe not found in zip - opening folder");
             ShellExecuteW(nullptr, L"open", extractDir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
             g.updateBusy = false;
             if (g.hwnd) PostMessageW(g.hwnd, MSG_REFRESH, 0, 0);
@@ -668,8 +678,10 @@ void OfferUpdateDialog() {
             if (g.hwnd) PostMessageW(g.hwnd, MSG_REFRESH, 0, 0);
             return;
         }
-        AppendLog(L"[+] updater scheduled — closing");
-        if (g.hwnd) PostMessageW(g.hwnd, WM_CLOSE, 0, 0);
+        AppendLog(L"[+] updater scheduled - closing");
+        // Hard-exit so the running image unlocks and the bat can replace it.
+        Sleep(200);
+        ExitProcess(0);
     }).detach();
 }
 
@@ -709,8 +721,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         DragAcceptFiles(hwnd, TRUE);
         g.output = DesktopGameDumpW();
         AppendLog(L"Drop GameAssembly.dll and global-metadata.dat, then Start Dump.");
-        AppendLog(L"Shift+Browse picks a game folder. Output: " + g.output);
-        StartUpdateCheck(false);
+        AppendLog(L"You can also drop a game folder. Output: " + g.output);
+        StartUpdateCheck(true);
         return 0;
     }
     case WM_SIZE:

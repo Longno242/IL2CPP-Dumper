@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here.
 
+## [v1.4.3] - 2026-09-28
+
+### Fixed
+- **Self-update asset pick** — GitHub release JSON nests an `uploader` object; name lookup no longer walks into it and skips the zip. Falls back to a constructed `dumper-<tag>-static-exe.zip` URL.
+- **Self-replace** — stages `dumper.exe.new`, waits until the running exe can be deleted, copies over it, then relaunches. App hard-exits after scheduling so the file unlocks.
+- **Update prompt** — on GUI open, offers “A new update is available. Would you like to update?” when a newer release exists.
+- **Log encoding** — update messages use ASCII so the console does not show mojibake.
+
 ## [v1.4.2] - 2026-09-28
 
 ### Added
