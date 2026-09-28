@@ -38,16 +38,22 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr COLORREF COL_BG = RGB(18, 18, 18);
-constexpr COLORREF COL_PANEL = RGB(28, 28, 28);
-constexpr COLORREF COL_PANEL2 = RGB(34, 34, 34);
-constexpr COLORREF COL_BORDER = RGB(55, 55, 55);
-constexpr COLORREF COL_BORDER_H = RGB(90, 90, 90);
-constexpr COLORREF COL_TEXT = RGB(210, 210, 210);
-constexpr COLORREF COL_MUTED = RGB(130, 130, 130);
-constexpr COLORREF COL_BTN = RGB(42, 42, 42);
-constexpr COLORREF COL_BTN_H = RGB(58, 58, 58);
-constexpr COLORREF COL_BTN_D = RGB(32, 32, 32);
+// Cool graphite — keep it flat and quiet.
+constexpr COLORREF COL_BG = RGB(14, 14, 16);
+constexpr COLORREF COL_SURFACE = RGB(22, 22, 26);
+constexpr COLORREF COL_SURFACE2 = RGB(28, 28, 34);
+constexpr COLORREF COL_BORDER = RGB(48, 48, 56);
+constexpr COLORREF COL_BORDER_H = RGB(90, 90, 102);
+constexpr COLORREF COL_TEXT = RGB(232, 232, 236);
+constexpr COLORREF COL_MUTED = RGB(120, 120, 132);
+constexpr COLORREF COL_DIM = RGB(72, 72, 82);
+constexpr COLORREF COL_BTN = RGB(32, 32, 38);
+constexpr COLORREF COL_BTN_H = RGB(44, 44, 52);
+constexpr COLORREF COL_PRIMARY = RGB(238, 238, 242);
+constexpr COLORREF COL_PRIMARY_H = RGB(255, 255, 255);
+constexpr COLORREF COL_ON_PRIMARY = RGB(18, 18, 20);
+constexpr COLORREF COL_OK = RGB(140, 200, 150);
+constexpr COLORREF COL_LINE = RGB(36, 36, 42);
 
 enum : int {
     ID_DROP_ASM = 1001,
@@ -71,8 +77,10 @@ struct Ui {
     HWND logEdit = nullptr;
     HFONT fontUi = nullptr;
     HFONT fontTitle = nullptr;
+    HFONT fontLabel = nullptr;
     HFONT fontMono = nullptr;
-    HBRUSH brPanel = nullptr;
+    HFONT fontBtn = nullptr;
+    HBRUSH brLog = nullptr;
 
     std::wstring assembly;
     std::wstring metadata;
@@ -80,6 +88,7 @@ struct Ui {
 
     RECT rcAsm{}, rcMeta{}, rcDump{}, rcUpdate{}, rcOpenOut{};
     RECT rcBrowseAsm{}, rcBrowseMeta{};
+    RECT rcLogFrame{};
 
     int hover = 0;
     std::atomic<bool> dumping{ false };
@@ -206,28 +215,34 @@ void Layout(HWND hwnd) {
     RECT rc{};
     GetClientRect(hwnd, &rc);
     const int w = rc.right - rc.left;
-    const int margin = 20;
-    const int gap = 12;
-    const int dropH = 88;
-    const int btnH = 40;
-    const int top = 56;
+    const int h = rc.bottom - rc.top;
+    const int m = 28;
+    const int gap = 14;
+    const int dropH = 100;
+    const int btnH = 42;
+    const int top = 78;
 
-    g.rcAsm = { margin, top, w - margin, top + dropH };
-    g.rcMeta = { margin, top + dropH + gap, w - margin, top + dropH * 2 + gap };
+    g.rcAsm = { m, top, w - m, top + dropH };
+    g.rcMeta = { m, top + dropH + gap, w - m, top + dropH * 2 + gap };
 
-    const int browseW = 72;
-    g.rcBrowseAsm = { g.rcAsm.right - browseW - 10, g.rcAsm.bottom - 30, g.rcAsm.right - 10, g.rcAsm.bottom - 10 };
-    g.rcBrowseMeta = { g.rcMeta.right - browseW - 10, g.rcMeta.bottom - 30, g.rcMeta.right - 10, g.rcMeta.bottom - 10 };
+    const int browseW = 88;
+    g.rcBrowseAsm = { g.rcAsm.right - browseW - 16, g.rcAsm.top + (dropH - 34) / 2,
+                      g.rcAsm.right - 16, g.rcAsm.top + (dropH - 34) / 2 + 34 };
+    g.rcBrowseMeta = { g.rcMeta.right - browseW - 16, g.rcMeta.top + (dropH - 34) / 2,
+                       g.rcMeta.right - 16, g.rcMeta.top + (dropH - 34) / 2 + 34 };
 
-    const int rowY = g.rcMeta.bottom + gap + 4;
-    const int dumpW = 160;
-    g.rcDump = { margin, rowY, margin + dumpW, rowY + btnH };
-    g.rcUpdate = { margin + dumpW + gap, rowY, margin + dumpW + gap + 140, rowY + btnH };
-    g.rcOpenOut = { margin + dumpW + gap + 140 + gap, rowY, margin + dumpW + gap + 140 + gap + 120, rowY + btnH };
+    const int rowY = g.rcMeta.bottom + 22;
+    const int dumpW = 168;
+    const int sideW = 132;
+    g.rcDump = { m, rowY, m + dumpW, rowY + btnH };
+    g.rcUpdate = { m + dumpW + gap, rowY, m + dumpW + gap + sideW, rowY + btnH };
+    g.rcOpenOut = { m + dumpW + gap + sideW + gap, rowY,
+                    m + dumpW + gap + sideW + gap + sideW, rowY + btnH };
 
-    const int logTop = rowY + btnH + gap + 8;
+    const int logTop = rowY + btnH + 28;
+    g.rcLogFrame = { m, logTop, w - m, h - m };
     if (g.logEdit) {
-        MoveWindow(g.logEdit, margin, logTop, w - margin * 2, rc.bottom - logTop - margin, TRUE);
+        MoveWindow(g.logEdit, m + 14, logTop + 34, w - m * 2 - 28, h - logTop - m - 48, TRUE);
     }
 }
 
@@ -237,13 +252,15 @@ void FillRectColor(HDC hdc, const RECT& r, COLORREF c) {
     DeleteObject(br);
 }
 
-void FrameRectColor(HDC hdc, const RECT& r, COLORREF c) {
-    HPEN pen = CreatePen(PS_SOLID, 1, c);
-    HGDIOBJ old = SelectObject(hdc, pen);
-    HGDIOBJ oldBr = SelectObject(hdc, GetStockObject(NULL_BRUSH));
-    Rectangle(hdc, r.left, r.top, r.right, r.bottom);
+void RoundFill(HDC hdc, const RECT& r, int rad, COLORREF fill, COLORREF border) {
+    HBRUSH br = CreateSolidBrush(fill);
+    HPEN pen = CreatePen(PS_SOLID, 1, border);
+    HGDIOBJ oldBr = SelectObject(hdc, br);
+    HGDIOBJ oldPen = SelectObject(hdc, pen);
+    RoundRect(hdc, r.left, r.top, r.right, r.bottom, rad, rad);
     SelectObject(hdc, oldBr);
-    SelectObject(hdc, old);
+    SelectObject(hdc, oldPen);
+    DeleteObject(br);
     DeleteObject(pen);
 }
 
@@ -254,6 +271,22 @@ void DrawTextIn(HDC hdc, const RECT& r, const wchar_t* text, COLORREF color, HFO
     RECT rr = r;
     DrawTextW(hdc, text, -1, &rr, fmt);
     SelectObject(hdc, old);
+}
+
+void DrawHLine(HDC hdc, int x1, int x2, int y, COLORREF c) {
+    HPEN pen = CreatePen(PS_SOLID, 1, c);
+    HGDIOBJ old = SelectObject(hdc, pen);
+    MoveToEx(hdc, x1, y, nullptr);
+    LineTo(hdc, x2, y);
+    SelectObject(hdc, old);
+    DeleteObject(pen);
+}
+
+std::wstring DisplayName(const std::wstring& path) {
+    if (path.empty()) return {};
+    size_t slash = path.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return path;
+    return path.substr(slash + 1);
 }
 
 bool PtIn(const RECT& r, int x, int y) {
@@ -271,33 +304,49 @@ int HitTest(int x, int y) {
     return 0;
 }
 
-void DrawButton(HDC hdc, const RECT& r, const wchar_t* label, bool hover, bool enabled) {
-    COLORREF fill = !enabled ? COL_BTN_D : (hover ? COL_BTN_H : COL_BTN);
-    FillRectColor(hdc, r, fill);
-    FrameRectColor(hdc, r, hover && enabled ? COL_BORDER_H : COL_BORDER);
-    DrawTextIn(hdc, r, label, enabled ? COL_TEXT : COL_MUTED, g.fontUi,
+void DrawPrimaryBtn(HDC hdc, const RECT& r, const wchar_t* label, bool hover, bool enabled) {
+    COLORREF fill = !enabled ? COL_DIM : (hover ? COL_PRIMARY_H : COL_PRIMARY);
+    COLORREF text = enabled ? COL_ON_PRIMARY : RGB(40, 40, 44);
+    RoundFill(hdc, r, 10, fill, fill);
+    DrawTextIn(hdc, r, label, text, g.fontBtn, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+}
+
+void DrawGhostBtn(HDC hdc, const RECT& r, const wchar_t* label, bool hover, bool enabled) {
+    COLORREF fill = hover && enabled ? COL_BTN_H : COL_BTN;
+    COLORREF border = hover && enabled ? COL_BORDER_H : COL_BORDER;
+    RoundFill(hdc, r, 10, fill, border);
+    DrawTextIn(hdc, r, label, enabled ? COL_TEXT : COL_MUTED, g.fontBtn,
                DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
-void DrawDropZone(HDC hdc, const RECT& r, const wchar_t* title, const std::wstring& path, bool hover) {
-    FillRectColor(hdc, r, hover ? COL_PANEL2 : COL_PANEL);
-    FrameRectColor(hdc, r, hover ? COL_BORDER_H : COL_BORDER);
+void DrawDropZone(HDC hdc, const RECT& r, const wchar_t* label, const wchar_t* hint,
+                  const std::wstring& path, bool hover) {
+    const bool filled = !path.empty();
+    COLORREF fill = hover ? COL_SURFACE2 : COL_SURFACE;
+    COLORREF border = hover ? COL_BORDER_H : (filled ? COL_BORDER : COL_DIM);
+    RoundFill(hdc, r, 14, fill, border);
 
-    RECT titleRc = r;
-    titleRc.left += 14;
-    titleRc.top += 12;
-    titleRc.right -= 90;
-    titleRc.bottom = titleRc.top + 20;
-    DrawTextIn(hdc, titleRc, title, COL_MUTED, g.fontUi, DT_LEFT | DT_SINGLELINE);
+    RECT badge = { r.left + 18, r.top + 16, r.left + 78, r.top + 36 };
+    RoundFill(hdc, badge, 8, filled ? RGB(28, 42, 32) : RGB(36, 36, 42),
+              filled ? RGB(48, 72, 54) : COL_BORDER);
+    DrawTextIn(hdc, badge, filled ? L"SET" : L"DROP",
+               filled ? COL_OK : COL_MUTED, g.fontLabel, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-    RECT pathRc = r;
-    pathRc.left += 14;
-    pathRc.top += 36;
-    pathRc.right -= 90;
-    pathRc.bottom -= 12;
-    const wchar_t* shown = path.empty() ? L"Drop file or folder here" : path.c_str();
-    DrawTextIn(hdc, pathRc, shown, path.empty() ? COL_MUTED : COL_TEXT, g.fontUi,
-               DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS);
+    RECT titleRc = { r.left + 90, r.top + 16, r.right - 110, r.top + 36 };
+    DrawTextIn(hdc, titleRc, label, COL_MUTED, g.fontLabel, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    RECT pathRc = { r.left + 18, r.top + 48, r.right - 110, r.bottom - 16 };
+    if (filled) {
+        std::wstring name = DisplayName(path);
+        RECT nameRc = { pathRc.left, pathRc.top, pathRc.right, pathRc.top + 22 };
+        RECT fullRc = { pathRc.left, pathRc.top + 22, pathRc.right, pathRc.bottom };
+        DrawTextIn(hdc, nameRc, name.c_str(), COL_TEXT, g.fontUi,
+                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        DrawTextIn(hdc, fullRc, path.c_str(), COL_DIM, g.fontLabel,
+                   DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_PATH_ELLIPSIS);
+    } else {
+        DrawTextIn(hdc, pathRc, hint, COL_MUTED, g.fontUi, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    }
 }
 
 void Paint(HWND hwnd) {
@@ -312,25 +361,37 @@ void Paint(HWND hwnd) {
 
     FillRectColor(mem, rc, COL_BG);
 
-    RECT title = { 20, 16, rc.right - 20, 44 };
+    RECT title = { 28, 22, rc.right - 100, 48 };
     DrawTextIn(mem, title, L"IL2CPP Dumper", COL_TEXT, g.fontTitle, DT_LEFT | DT_SINGLELINE);
-    RECT ver = { 20, 16, rc.right - 20, 44 };
+    RECT sub = { 28, 48, rc.right - 28, 68 };
+    DrawTextIn(mem, sub, L"Offline metadata export  ·  drag files or browse",
+               COL_MUTED, g.fontLabel, DT_LEFT | DT_SINGLELINE);
+
+    RECT ver = { 28, 22, rc.right - 28, 48 };
     std::wstring verText = L"v" DUMPER_VERSION_W;
-    DrawTextIn(mem, ver, verText.c_str(), COL_MUTED, g.fontUi, DT_RIGHT | DT_SINGLELINE);
+    DrawTextIn(mem, ver, verText.c_str(), COL_DIM, g.fontLabel, DT_RIGHT | DT_SINGLELINE);
 
-    DrawDropZone(mem, g.rcAsm, L"ASSEMBLY  ·  GameAssembly.dll / UserAssembly.dll / game folder",
-                 g.assembly, g.hover == ID_DROP_ASM);
-    DrawDropZone(mem, g.rcMeta, L"METADATA  ·  global-metadata.dat",
-                 g.metadata, g.hover == ID_DROP_META);
+    DrawHLine(mem, 28, rc.right - 28, 72, COL_LINE);
 
-    DrawButton(mem, g.rcBrowseAsm, L"Browse", g.hover == ID_BTN_BROWSE_ASM, !g.dumping);
-    DrawButton(mem, g.rcBrowseMeta, L"Browse", g.hover == ID_BTN_BROWSE_META, !g.dumping);
+    DrawDropZone(mem, g.rcAsm, L"ASSEMBLY", L"GameAssembly.dll  ·  UserAssembly.dll  ·  game folder",
+                 g.assembly, g.hover == ID_DROP_ASM || g.hover == ID_BTN_BROWSE_ASM);
+    DrawDropZone(mem, g.rcMeta, L"METADATA", L"global-metadata.dat",
+                 g.metadata, g.hover == ID_DROP_META || g.hover == ID_BTN_BROWSE_META);
 
-    DrawButton(mem, g.rcDump, g.dumping ? L"Dumping…" : L"Start Dump",
-               g.hover == ID_BTN_DUMP, !g.dumping && !g.assembly.empty() && !g.metadata.empty());
-    DrawButton(mem, g.rcUpdate, g.updateBusy ? L"Checking…" : L"Check Update",
-               g.hover == ID_BTN_UPDATE, !g.updateBusy);
-    DrawButton(mem, g.rcOpenOut, L"Open Output", g.hover == ID_BTN_OPEN_OUT, true);
+    DrawGhostBtn(mem, g.rcBrowseAsm, L"Browse", g.hover == ID_BTN_BROWSE_ASM, !g.dumping);
+    DrawGhostBtn(mem, g.rcBrowseMeta, L"Browse", g.hover == ID_BTN_BROWSE_META, !g.dumping);
+
+    const bool canDump = !g.dumping && !g.assembly.empty() && !g.metadata.empty();
+    DrawPrimaryBtn(mem, g.rcDump, g.dumping ? L"Dumping…" : L"Start Dump",
+                  g.hover == ID_BTN_DUMP, canDump);
+    DrawGhostBtn(mem, g.rcUpdate, g.updateBusy ? L"Checking…" : L"Updates",
+                 g.hover == ID_BTN_UPDATE, !g.updateBusy);
+    DrawGhostBtn(mem, g.rcOpenOut, L"Output", g.hover == ID_BTN_OPEN_OUT, true);
+
+    RoundFill(mem, g.rcLogFrame, 14, COL_SURFACE, COL_BORDER);
+    RECT logLabel = { g.rcLogFrame.left + 18, g.rcLogFrame.top + 10,
+                      g.rcLogFrame.right - 18, g.rcLogFrame.top + 30 };
+    DrawTextIn(mem, logLabel, L"CONSOLE", COL_MUTED, g.fontLabel, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
     BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
     SelectObject(mem, oldBmp);
@@ -616,19 +677,29 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_CREATE: {
         g.hwnd = hwnd;
-        g.brPanel = CreateSolidBrush(COL_PANEL);
-        g.fontTitle = CreateFontW(22, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+        g.brLog = CreateSolidBrush(COL_SURFACE);
+        g.fontTitle = CreateFontW(26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
                                   DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                   CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
         g.fontUi = CreateFontW(15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-        g.fontMono = CreateFontW(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        g.fontBtn = CreateFontW(14, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        g.fontLabel = CreateFontW(11, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                                  DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                  CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        g.fontMono = CreateFontW(13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                  DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                  CLEARTYPE_QUALITY, FIXED_PITCH | FF_MODERN, L"Consolas");
 
         BOOL dark = TRUE;
         DwmSetWindowAttribute(hwnd, 20, &dark, sizeof(dark));
+        COLORREF caption = COL_BG;
+        DwmSetWindowAttribute(hwnd, 35, &caption, sizeof(caption)); // DWMWA_CAPTION_COLOR
+        COLORREF border = COL_LINE;
+        DwmSetWindowAttribute(hwnd, 34, &border, sizeof(border));   // DWMWA_BORDER_COLOR
 
         g.logEdit = CreateWindowExW(0, L"EDIT", L"",
                                     WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
@@ -638,7 +709,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         DragAcceptFiles(hwnd, TRUE);
         g.output = DesktopGameDumpW();
         AppendLog(L"Drop GameAssembly.dll and global-metadata.dat, then Start Dump.");
-        AppendLog(L"You can also drop a game folder. Output: " + g.output);
+        AppendLog(L"Shift+Browse picks a game folder. Output: " + g.output);
         StartUpdateCheck(false);
         return 0;
     }
@@ -655,8 +726,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_CTLCOLORSTATIC: {
         HDC hdc = (HDC)wParam;
         SetTextColor(hdc, COL_TEXT);
-        SetBkColor(hdc, COL_PANEL);
-        return (LRESULT)g.brPanel;
+        SetBkColor(hdc, COL_SURFACE);
+        return (LRESULT)g.brLog;
     }
     case WM_MOUSEMOVE: {
         int x = GET_X_LPARAM(lParam), y = GET_Y_LPARAM(lParam);
@@ -732,8 +803,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_DESTROY:
         if (g.fontTitle) DeleteObject(g.fontTitle);
         if (g.fontUi) DeleteObject(g.fontUi);
+        if (g.fontBtn) DeleteObject(g.fontBtn);
+        if (g.fontLabel) DeleteObject(g.fontLabel);
         if (g.fontMono) DeleteObject(g.fontMono);
-        if (g.brPanel) DeleteObject(g.brPanel);
+        if (g.brLog) DeleteObject(g.brLog);
         PostQuitMessage(0);
         return 0;
     }
@@ -755,8 +828,8 @@ int RunGui(HINSTANCE instance) {
     wc.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
     RegisterClassExW(&wc);
 
-    const int width = 720;
-    const int height = 560;
+    const int width = 880;
+    const int height = 680;
     HWND hwnd = CreateWindowExW(
         WS_EX_ACCEPTFILES,
         wc.lpszClassName,

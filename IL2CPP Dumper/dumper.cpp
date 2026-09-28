@@ -870,12 +870,12 @@ namespace {
         out << "Pick whichever file matches your project language.\n\n";
         out << "Files:\n";
         out << "  GameDump.hpp  - C/C++   (#include and use constexpr offsets)\n";
-        out << "  GameDump.cs   - C#      (reference in your mod / tool project)\n";
+        out << "  GameDump.cs   - C#      (reference constants / tooling)\n";
         out << "  GameDump.rs   - Rust    (pub const values in nested modules)\n";
         out << "  GameDump.py   - Python  (class attributes for scripting)\n";
         out << "  GameDump.json - JSON    (for tools, scripts, or custom parsers)\n";
         out << "  Index.json    - flat search index (methods, fields, classes)\n";
-        out << "  images/       - per-assembly C# dumps (drop into a Mono/C# project)\n\n";
+        out << "  images/       - per-assembly C# files\n\n";
         out << "Suffix guide:\n";
         out << "  *_RVA on methods/static fields = offset from GameAssembly.dll base\n";
         out << "  *_Offset on instance fields    = offset from the object pointer\n";
@@ -924,6 +924,10 @@ bool GameDumper::DumpAll(const std::string& output_dir,
     std::filesystem::create_directories(dir, ec);
 
     auto images = rrid::get_images();
+    if (images.empty()) {
+        log("[!] no IL2CPP images — inject later (after main menu) or check module detection");
+        return false;
+    }
     log("[*] " + std::to_string(images.size()) + " images");
 
     size_t i = 0;

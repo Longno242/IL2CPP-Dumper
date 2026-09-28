@@ -1053,6 +1053,11 @@ inline bool rrid::init() {
 		ctx.images.push_back(std::move(img));
 	}
 
+	if (ctx.images.empty()) {
+		ctx.init_error = "assemblies present but no images resolved";
+		return false;
+	}
+
 	ctx.initialized = true;
 	return true;
 }

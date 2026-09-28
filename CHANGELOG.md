@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here.
 
+## [v1.4.2] - 2026-09-28
+
+### Added
+- **Static EXE GUI refresh** — rounded cards, primary dump button, SET/DROP badges, framed console, dark title bar.
+
+### Fixed
+- **Runtime DLL unload hang** — after dump finished it printed `unloading` and froze. Console is closed first, then unload runs on a short delayed thread so CRT can unwind cleanly. Failed dumps also unload now.
+- **Empty image set** — treat “assemblies but no images” as init failure instead of writing an empty dump.
+
 ## [v1.4.1] - 2026-09-22
 
 ### Added

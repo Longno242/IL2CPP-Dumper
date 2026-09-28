@@ -1,9 +1,9 @@
-﻿IL2CPP Dumper static tool (v1.4.1)
+﻿IL2CPP Dumper static tool (v1.4.2)
 
 GUI: double-click dumper.exe
   - drop GameAssembly.dll + global-metadata.dat
   - Start Dump
-  - Check Update (GitHub releases)
+  - Updates (GitHub releases)
 
 CLI:
   dumper.exe --cli <GameAssembly.dll> <global-metadata.dat> [output-dir]
