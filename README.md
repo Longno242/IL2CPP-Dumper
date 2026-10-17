@@ -3,6 +3,9 @@
 # IL2CPP Dumper
 
 
+[![Total Downloads](https://img.shields.io/github/downloads/Longno242/IL2CPP-Dumper/total?label=Downloads&logo=github)](https://github.com/Longno242/IL2CPP-Dumper/releases)
+
+
 Extract and document IL2CPP metadata from Unity games. The runtime component reads live metadata from a running process; the static EXE reads `GameAssembly.dll` and `global-metadata.dat` from disk. Output is written to a `GameDump` folder with type layouts, field offsets, method RVAs, inheritance info, and C#-style signatures.
 
 Typical uses: understanding your own Unity IL2CPP builds, generating reference headers for tooling, comparing builds across versions, and supporting authorized security research or interoperability work.
