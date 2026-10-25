@@ -1,212 +1,164 @@
-# PLS STAR THE REPO / REPORT ANY PROBLEMS
-
 # IL2CPP Dumper
 
+[![Release](https://img.shields.io/github/v/release/Longno242/IL2CPP-Dumper?label=release&logo=github)](https://github.com/Longno242/IL2CPP-Dumper/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Longno242/IL2CPP-Dumper/total?label=downloads&logo=github)](https://github.com/Longno242/IL2CPP-Dumper/releases)
+[![License](https://img.shields.io/github/license/Longno242/IL2CPP-Dumper)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows)](https://github.com/Longno242/IL2CPP-Dumper/releases)
 
-[![Total Downloads](https://img.shields.io/github/downloads/Longno242/IL2CPP-Dumper/total?label=Downloads&logo=github)](https://github.com/Longno242/IL2CPP-Dumper/releases)
+Dump Unity IL2CPP metadata into readable C++, C#, Rust, Python, and JSON — either from a **running process** or from **files on disk**.
 
+| | Runtime DLL | Static EXE |
+|---|---|---|
+| **Input** | Live game process | `GameAssembly.dll` + `global-metadata.dat` |
+| **Best for** | Encrypted / packed metadata | Offline dumps when metadata is plain |
+| **Binary** | `dumper.dll` | `dumper.exe` |
 
-Extract and document IL2CPP metadata from Unity games. The runtime component reads live metadata from a running process; the static EXE reads `GameAssembly.dll` and `global-metadata.dat` from disk. Output is written to a `GameDump` folder with type layouts, field offsets, method RVAs, inheritance info, and C#-style signatures.
+**Latest build:** [Releases](https://github.com/Longno242/IL2CPP-Dumper/releases/latest) · Star the repo if it helps · [Open an issue](https://github.com/Longno242/IL2CPP-Dumper/issues) for bugs.
 
-Typical uses: understanding your own Unity IL2CPP builds, generating reference headers for tooling, comparing builds across versions, and supporting authorized security research or interoperability work.
-
-## Contents
-
-- [Features](#features)
-- [Runtime vs static](#runtime-vs-static)
-- [Requirements](#requirements)
-- [Build](#build)
-- [Usage](#usage)
-- [Example output](#example-output)
-- [Using the export files](#using-the-export-files)
-- [Project layout](#project-layout)
-- [How it works](#how-it-works)
-- [Configuration](#configuration)
-- [Troubleshooting](#troubleshooting)
-- [Limitations](#limitations)
-- [Disclaimer](#disclaimer)
+---
 
 ## Features
 
-- Exports every loaded IL2CPP image in one pass.
-- Multiple output formats from the same metadata walk:
-  - `GameDump.hpp` — C/C++
-  - `GameDump.cs` — C#
-  - `GameDump.rs` — Rust
-  - `GameDump.py` — Python
-  - `GameDump.json` — JSON
-- **`Index.json`** — flat search index mapping type/method names to symbol paths and RVAs.
-- **`images/`** — per-assembly **C#** files named after the assemblies (`Assembly-CSharp.cs`, etc.).
-- Nested scopes per class; C# signatures in comments for readability.
-- Static fields → `_RVA`, instance fields → `_Offset`, methods → `_RVA`.
-- **MethodInfo RVA** alongside method code RVAs.
-- Parent class, interfaces, and generic flags in comments and JSON.
-- Duplicate identifiers auto-suffixed (`_2`, `_3`, …).
-- Method overloads disambiguated by parameter types.
-- Nested types and enum members included.
-- Runtime init retries until IL2CPP is ready; auto-detects `GameAssembly.dll` / `UserAssembly.dll` and other IL2CPP modules.
-- Export resolution: `GetProcAddress` → PE/table scan → UnityPlayer scan → experimental renamed-export patterns.
-- Static EXE for unencrypted on-disk metadata (metadata versions supported by the parser).
-- Static EXE GUI (drag-drop) + GitHub release check / self-update.
-- C++20, Win32 only — no third-party runtime dependencies.
+- One-pass dump of IL2CPP images → classes → fields / methods
+- Multi-format output from the same walk (`hpp` / `cs` / `rs` / `py` / `json`)
+- Flat `Index.json` + per-assembly files under `images/`
+- Static fields as `_RVA`, instance fields as `_Offset`, methods as `_RVA`
+- Parent types, interfaces, generics, nested types, enums
+- Runtime: auto-detect `GameAssembly` / `UserAssembly`, init retries, renamed-export recovery
+- Static GUI: drag-drop, output toggles, folder picker, GitHub self-update
+- C++20 · Win32 · no third-party runtime deps
 
-## Runtime vs static
+---
 
-| Mode | Input | When to use |
-|---|---|---|
-| **Runtime DLL** | Running Unity IL2CPP process | Encrypted/packed metadata, or you need in-memory structures |
-| **Static EXE** | `GameAssembly.dll` + `global-metadata.dat` | Offline analysis when metadata on disk is plain |
+## Quick start
 
-Static tools (Il2CppDumper, Il2CppInspector, …) parse `global-metadata.dat` directly. That fails when metadata is encrypted or the binary is wrapped. The runtime path reads the same structures the game already loaded into memory.
+### Option A — Static EXE (offline)
 
-## Requirements
+1. Download [`dumper-*-static-exe.zip`](https://github.com/Longno242/IL2CPP-Dumper/releases/latest)
+2. Run `dumper.exe`
+3. Drop `GameAssembly.dll` and `global-metadata.dat` (or a game folder)
+4. Optionally toggle formats / Unity·System, set the output folder
+5. Click **Start Dump**
 
-| | |
-|---|---|
-| OS | Windows 10 / 11, x64 |
-| Toolchain | Visual Studio 2022+ with C++ desktop workload |
-| SDK | Windows 10 SDK |
-| Language | C++20 |
-| Target | Unity IL2CPP build (`GameAssembly.dll` or `UserAssembly.dll`) |
-
-## Build
-
-1. Open `IL2CPPDumper.slnx` in Visual Studio.
-2. Configuration: **Release | x64**.
-3. Build (`Ctrl+Shift+B`).
-
-Outputs:
-- `x64\Release\dumper.dll` — runtime component
-- `x64\Release\dumper.exe` — static/offline tool
-
-Pre-built binaries: [GitHub releases](https://github.com/Longno242/IL2CPP-Dumper/releases).
-
-## Usage
-
-### Runtime DLL
-
-1. Start the target application and wait until IL2CPP has finished initializing (usually main menu).
-2. Load `dumper.dll` into the process with your preferred DLL loader.
-3. A console titled **IL2CPP Dumper** shows progress.
-4. Output appears under `Desktop\GameDump\` (or `C:\GameDump\` if the desktop path is unavailable).
-
-### Static EXE
-
-Double-click `dumper.exe` for the grey/black GUI:
-- Drop `GameAssembly.dll` (or a game folder) into the top zone
-- Drop `global-metadata.dat` into the second zone
-- Toggle chips for Unity/System include and which outputs to write
-- **Set Folder** picks the dump directory; **Open** opens it
-- Click **Start Dump**
-- **Updates** queries GitHub releases and can download/replace the EXE
-
-CLI (optional):
-
-```
+```text
 dumper.exe --cli <GameAssembly.dll> <global-metadata.dat> [output-dir]
 dumper.exe --cli <game-folder>
 ```
 
 If metadata on disk is encrypted, use the runtime DLL instead.
 
-### Output files
+### Option B — Runtime DLL (in-process)
 
-| File | Format | Purpose |
-|---|---|---|
-| `GameDump.hpp` | C/C++ | Headers with constexpr offsets/RVAs |
-| `GameDump.cs` | C# | Reference constants |
-| `GameDump.rs` | Rust | Constants in nested modules |
-| `GameDump.py` | Python | Scriptable reference |
-| `GameDump.json` | JSON | Structured metadata export |
-| `Index.json` | JSON | Flat lookup index |
-| `images/*.cs` | C# | One file per assembly |
-| `README.txt` | — | Folder guide |
+1. Download [`dumper-*-runtime-dll.zip`](https://github.com/Longno242/IL2CPP-Dumper/releases/latest)
+2. Launch the game and wait until IL2CPP is up (usually main menu)
+3. Load `dumper.dll` with your loader
+4. Watch the **IL2CPP Dumper** console — output goes to `Desktop\GameDump\`
 
-## Example output (C++)
+---
+
+## Output
+
+| File | Purpose |
+|---|---|
+| `GameDump.hpp` | C/C++ constexpr offsets / RVAs |
+| `GameDump.cs` | C# reference constants |
+| `GameDump.rs` | Rust nested modules |
+| `GameDump.py` | Python constants |
+| `GameDump.json` | Structured dump |
+| `Index.json` | Flat name → symbol / RVA index |
+| `images/*.cs` | One C# file per assembly |
+| `Strings.json` | Optional string scan |
+| `scripts/` | IDA / Ghidra / Binary Ninja helpers |
+| `README.txt` | Folder guide |
 
 ```cpp
 namespace GameDump {
-
 namespace Assembly_CSharp {
-    namespace Game_PlayerController {
-        constexpr uint64_t ClassRVA = 0x1ABCDE0;
-        constexpr uint64_t health_Offset    = 0x18;       // public int health
-        constexpr uint64_t maxHealth_RVA    = 0x2F0AB00;  // public static int maxHealth
-        constexpr uint64_t TakeDamage_int_RVA = 0x1C3D4E0;
-    }
+namespace Game_PlayerController {
+    constexpr uint64_t ClassRVA = 0x1ABCDE0;
+    constexpr uint64_t health_Offset     = 0x18;      // public int health
+    constexpr uint64_t maxHealth_RVA     = 0x2F0AB00; // public static int maxHealth
+    constexpr uint64_t TakeDamage_int_RVA = 0x1C3D4E0;
 }
-
-} // GameDump
+}
+}
 ```
 
-| Suffix | Meaning | Relative to |
-|---|---|---|
-| `_RVA` (method/static) | Offset in `GameAssembly.dll` | Module base |
-| `_Offset` (instance field) | Offset in object layout | Object pointer |
-| `ClassRVA` | `Il2CppClass*` location | Module base |
+| Suffix | Meaning |
+|---|---|
+| `_RVA` | Offset in `GameAssembly.dll` (methods / static data offset) |
+| `_Offset` | Instance field offset from object base |
+| `ClassRVA` | `Il2CppClass*` relative to module base |
 
-## Using the export files
+---
 
-Include or import the format that matches your toolchain. For large games, use per-assembly files under `images/` instead of the monolithic exports.
+## Build from source
 
-Re-export after a game update to refresh offsets and signatures.
+**Needs:** Windows 10/11 x64 · Visual Studio 2022+ (C++ desktop) · Windows SDK · C++20
+
+1. Open `IL2CPPDumper.slnx`
+2. Build **Release | x64**
+
+| Output | Path |
+|---|---|
+| Runtime | `x64\Release\dumper.dll` |
+| Static | `x64\Release\dumper.exe` |
+
+---
 
 ## Project layout
 
-```
+```text
 IL2CPP-Dumper/
 ├── IL2CPPDumper.slnx
-├── IL2CPP Dumper/              runtime DLL
-│   ├── experimental/
-│   │   ├── renamed_exports.*   pattern match for obfuscated export names
-│   │   ├── export_scan.*       PE export + pointer-table recovery
-│   │   └── module_discovery.*  auto-detect IL2CPP module in process
-│   └── rrid.hpp                IL2CPP metadata reader
-└── IL2CPP Dumper Exe/          static/offline EXE
+├── IL2CPP Dumper/                 # runtime DLL
+│   ├── dllmain.cpp
+│   ├── dumper.cpp
+│   ├── rrid.hpp                   # live IL2CPP reader
+│   └── experimental/
+│       ├── module_discovery.*     # find IL2CPP module
+│       ├── export_scan.*          # PE / pointer-table recovery
+│       └── renamed_exports.*      # stripped export names
+└── IL2CPP Dumper Exe/             # static / offline EXE
+    ├── gui.cpp                    # Win32 GUI + options
+    ├── updater.cpp                # GitHub self-update
+    ├── emit.cpp
+    └── static/                    # PE + metadata parser
 ```
+
+---
 
 ## How it works
 
-1. **Runtime:** `DllMain` spawns a worker thread that calls `GameDumper::DumpAll`.
-2. **Init:** Polls until IL2CPP APIs resolve and assemblies are available.
-3. **Walk:** Enumerates images → classes → fields/methods.
-4. **Emit:** Writes C++, C#, Rust, Python, JSON, index, and per-assembly files.
-5. **Static:** Parses PE + metadata from disk, then uses the same emitters.
+1. **Runtime** — worker thread waits for IL2CPP APIs + assemblies, then walks images.
+2. **Resolve** — `GetProcAddress` → export / pointer scan → UnityPlayer → renamed-export patterns.
+3. **Static** — parse PE + `global-metadata.dat`, then the same emitters.
+4. **Emit** — write the formats you enabled (GUI chips or `DumpConfig` defaults).
 
-## Configuration
-
-Tunables in source:
-
-| Setting | Location |
-|---|---|
-| Module name default | `rrid.hpp` |
-| Init retry count / interval | `dumper.cpp` |
-| Output folder | `dllmain.cpp` |
-| Renamed-export patterns | `experimental/renamed_exports.cpp` |
+---
 
 ## Troubleshooting
 
-**No output file**
-Wait until IL2CPP is initialized before loading the DLL. Init retries for up to ~60 seconds.
+| Symptom | What to try |
+|---|---|
+| No dump / waits forever | Inject after IL2CPP init (main menu). Retries ~60s. |
+| `rrid::init failed` | Read the console reason; check listed module candidates. |
+| Renamed / stripped exports | Experimental scan should log `table-scan` or `renamed-export mode`. |
+| Static dump fails | Metadata may be encrypted or tables reordered — use runtime, or repair metadata first. |
+| Odd generated names | Build-time obfuscation can’t be undone; suffixes avoid collisions. |
 
-**`rrid::init failed`**
-The console prints the reason (`missing API`, module not loaded, etc.). The DLL lists scored module candidates when auto-detect runs. Try a later init point or report the Unity version.
-
-**Renamed / obfuscated exports**
-The experimental path pattern-matches export bodies when `il2cpp_*` names are gone. Partial recovery is logged as `api scan: table-scan` or `renamed-export mode`.
-
-**Loader fails**
-Process protection or loader compatibility — outside this tool’s scope.
-
-**Odd generated names**
-Compiler-generated IL2CPP names are preserved; numeric suffixes avoid collisions.
+---
 
 ## Limitations
 
-- Auto-discovery covers common module names; exotic packers may still need a source edit in `rrid.hpp`.
-- Metadata and RVAs only — no method bodies or full generic expansion.
-- x64 tested; Win32 configs exist but are rarely used.
+- Metadata and RVAs only — no method bodies or full generic expansion
+- Exotic packers may still need a module-name tweak in `rrid.hpp`
+- Primary target is **x64**
+
+---
 
 ## Disclaimer
 
-For lawful, authorized use only: your own software, projects you have permission to analyze, or research with explicit consent. You are responsible for complying with applicable licenses and terms. This project exports metadata for analysis and documentation; it does not grant rights to bypass protections or use outputs in unauthorized ways.
+For lawful, authorized use only: your own software, projects you have permission to analyze, or research with explicit consent. You are responsible for complying with licenses and terms. This tool exports metadata for analysis and documentation — it does not authorize bypassing protections or unauthorized use of dumps.
+
+MIT · [Longno242](https://github.com/Longno242)
