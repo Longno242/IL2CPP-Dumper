@@ -10,6 +10,21 @@
 namespace module_discovery {
 namespace {
 
+bool safe_readable(const void* address, std::size_t size) {
+	if (!address || size == 0) {
+		return false;
+	}
+	__try {
+		volatile std::uint8_t sum = 0;
+		const auto* p = static_cast<const std::uint8_t*>(address);
+		sum = static_cast<std::uint8_t>(p[0] + p[size - 1]);
+		(void)sum;
+		return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		return false;
+	}
+}
+
 bool module_has_export(HMODULE module, const char* name) {
 	return module && GetProcAddress(module, name) != nullptr;
 }
@@ -21,23 +36,37 @@ int count_il2cpp_exports(HMODULE module) {
 
 	auto* base = reinterpret_cast<uint8_t*>(module);
 	auto* dos = reinterpret_cast<PIMAGE_DOS_HEADER>(base);
-	if (dos->e_magic != IMAGE_DOS_SIGNATURE) {
+	if (!safe_readable(dos, sizeof(IMAGE_DOS_HEADER)) || dos->e_magic != IMAGE_DOS_SIGNATURE) {
 		return 0;
 	}
 
 	auto* nt = reinterpret_cast<PIMAGE_NT_HEADERS>(base + dos->e_lfanew);
+	if (!safe_readable(nt, sizeof(IMAGE_NT_HEADERS)) || nt->Signature != IMAGE_NT_SIGNATURE) {
+		return 0;
+	}
+
 	const auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
 	if (!dir.VirtualAddress) {
 		return 0;
 	}
 
 	auto* exp = reinterpret_cast<PIMAGE_EXPORT_DIRECTORY>(base + dir.VirtualAddress);
+	if (!safe_readable(exp, sizeof(IMAGE_EXPORT_DIRECTORY))) {
+		return 0;
+	}
+
 	auto* names = reinterpret_cast<DWORD*>(base + exp->AddressOfNames);
+	if (!safe_readable(names, sizeof(DWORD))) {
+		return 0;
+	}
 
 	int count = 0;
 	for (DWORD i = 0; i < exp->NumberOfNames; ++i) {
+		if (!safe_readable(&names[i], sizeof(DWORD))) {
+			break;
+		}
 		const char* name = reinterpret_cast<const char*>(base + names[i]);
-		if (std::strncmp(name, "il2cpp_", 7) == 0) {
+		if (safe_readable(name, 8) && std::strncmp(name, "il2cpp_", 7) == 0) {
 			++count;
 		}
 	}
@@ -51,21 +80,35 @@ bool module_looks_renamed(HMODULE module) {
 
 	auto* base = reinterpret_cast<uint8_t*>(module);
 	auto* dos = reinterpret_cast<PIMAGE_DOS_HEADER>(base);
+	if (!safe_readable(dos, sizeof(IMAGE_DOS_HEADER)) || dos->e_magic != IMAGE_DOS_SIGNATURE) {
+		return false;
+	}
+
 	auto* nt = reinterpret_cast<PIMAGE_NT_HEADERS>(base + dos->e_lfanew);
+	if (!safe_readable(nt, sizeof(IMAGE_NT_HEADERS)) || nt->Signature != IMAGE_NT_SIGNATURE) {
+		return false;
+	}
+
 	const auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
 	if (!dir.VirtualAddress) {
 		return false;
 	}
 
 	auto* exp = reinterpret_cast<PIMAGE_EXPORT_DIRECTORY>(base + dir.VirtualAddress);
+	if (!safe_readable(exp, sizeof(IMAGE_EXPORT_DIRECTORY))) {
+		return false;
+	}
 	if (exp->NumberOfNames < 20) {
 		return false;
 	}
 
+	auto* names = reinterpret_cast<DWORD*>(base + exp->AddressOfNames);
 	for (DWORD i = 0; i < exp->NumberOfNames; ++i) {
-		const char* name = reinterpret_cast<const char*>(
-			base + reinterpret_cast<DWORD*>(base + exp->AddressOfNames)[i]);
-		if (std::strncmp(name, "il2cpp_", 7) == 0) {
+		if (!safe_readable(&names[i], sizeof(DWORD))) {
+			return false;
+		}
+		const char* name = reinterpret_cast<const char*>(base + names[i]);
+		if (safe_readable(name, 8) && std::strncmp(name, "il2cpp_", 7) == 0) {
 			return false;
 		}
 	}

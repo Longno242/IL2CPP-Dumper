@@ -131,20 +131,37 @@ void remember(const char* name, void* address) {
 }
 
 void collect_pe_exports(HMODULE module) {
-	const auto base = reinterpret_cast<std::uintptr_t>(module);
+	ModuleView view;
+	if (!fill_module_view(module, view)) {
+		return;
+	}
+
+	const auto base = view.base;
 	const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
 	const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
 	const auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
 	if (!dir.VirtualAddress || !dir.Size) {
 		return;
 	}
+	if (!safe_readable(reinterpret_cast<const void*>(base + dir.VirtualAddress), sizeof(IMAGE_EXPORT_DIRECTORY))) {
+		return;
+	}
 
 	const auto* exports = reinterpret_cast<const IMAGE_EXPORT_DIRECTORY*>(base + dir.VirtualAddress);
+	if (!safe_readable(reinterpret_cast<const void*>(base + exports->AddressOfNames), sizeof(DWORD)) ||
+		!safe_readable(reinterpret_cast<const void*>(base + exports->AddressOfNameOrdinals), sizeof(WORD)) ||
+		!safe_readable(reinterpret_cast<const void*>(base + exports->AddressOfFunctions), sizeof(DWORD))) {
+		return;
+	}
+
 	const auto* names = reinterpret_cast<const DWORD*>(base + exports->AddressOfNames);
 	const auto* ords = reinterpret_cast<const WORD*>(base + exports->AddressOfNameOrdinals);
 	const auto* funcs = reinterpret_cast<const DWORD*>(base + exports->AddressOfFunctions);
 
 	for (DWORD i = 0; i < exports->NumberOfNames; ++i) {
+		if (!safe_readable(&names[i], sizeof(DWORD))) {
+			break;
+		}
 		const char* name = reinterpret_cast<const char*>(base + names[i]);
 		if (!is_il2cpp_export_name(name)) {
 			continue;

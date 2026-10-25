@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here.
 
+## [v1.4.4] - 2026-10-25
+
+### Added
+- **GUI dump options** — toggle chips for Unity/System inclusion and each output format (C++, C#, Rust, Python, JSON, Index, Images, Scripts, Stubs, Strings, Diff).
+- **Output folder picker** — Set Folder / click the OUTPUT bar to choose the dump directory; Open still opens it.
+
+### Fixed
+- **Static field RVA (runtime)** — no longer treats `FieldInfo*` as a data RVA; uses `il2cpp_field_get_offset`.
+- **Null namespaces** — classes / parents / interfaces are kept when namespace APIs return null.
+- **Keyword-safe identifiers + JSON escape** on the runtime dump path (matched static EXE).
+- **Index.json** — only replaced after a successful write so a mid-emit failure cannot leave the folder without an index.
+- **GUI worker shutdown** — workers stop posting to HWND after close; COM init/uninit balanced; PowerShell unzip paths quote-safe.
+- **Safer PE reads** in module discovery / export scan; DLL falls back to the best module candidate.
+
 ## [v1.4.3] - 2026-09-28
 
 ### Fixed

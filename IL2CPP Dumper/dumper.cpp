@@ -62,6 +62,25 @@ namespace {
         return name + ".cs";
     }
 
+    bool IsKeyword(const std::string& s) {
+        static const std::unordered_set<std::string> kws = {
+            "alignas","alignof","and","and_eq","asm","auto","bitand","bitor","bool","break","case",
+            "catch","char","class","compl","concept","const","consteval","constexpr","constinit",
+            "continue","co_await","co_return","co_yield","decltype","default","delete","do","double",
+            "dynamic_cast","else","enum","explicit","export","extern","false","float","for","friend",
+            "goto","if","inline","int","long","mutable","namespace","new","noexcept","not","not_eq",
+            "nullptr","operator","or","or_eq","private","protected","public","register","reinterpret_cast",
+            "requires","return","short","signed","sizeof","static","static_assert","static_cast","struct",
+            "switch","template","this","thread_local","throw","true","try","typedef","typeid","typename",
+            "union","unsigned","using","virtual","void","volatile","wchar_t","while","xor","xor_eq",
+            "event","params","base","object","string","decimal","checked","unchecked","lock","nameof",
+            "record","var","when","with","yield","async","await","fn","let","mut","mod","crate","self",
+            "super","type","where","use","pub","ref","match","loop","move","dyn","impl","trait","as",
+            "in","is","from","import","pass","None","True","False","lambda","nonlocal","global","def"
+        };
+        return kws.count(s) > 0;
+    }
+
     std::string SanitizeIdent(const std::string& in) {
         if (in.empty()) return "_";
 
@@ -80,6 +99,7 @@ namespace {
         if (out[0] >= '0' && out[0] <= '9') {
             out.insert(out.begin(), '_');
         }
+        if (IsKeyword(out)) out += '_';
         return out;
     }
 
@@ -102,6 +122,7 @@ namespace {
         if (out[0] >= '0' && out[0] <= '9') {
             out.insert(out.begin(), '_');
         }
+        if (IsKeyword(out)) out += '_';
         return out;
     }
 
@@ -123,14 +144,23 @@ namespace {
 
     std::string JsonEscape(const std::string& s) {
         std::ostringstream os;
-        for (char c : s) {
+        for (unsigned char c : s) {
             switch (c) {
                 case '"':  os << "\\\""; break;
                 case '\\': os << "\\\\"; break;
-                case '\n': os << "\\n";  break;
-                case '\r': os << "\\r";  break;
-                case '\t': os << "\\t";  break;
-                default:   os << c;      break;
+                case '\b': os << "\\b"; break;
+                case '\f': os << "\\f"; break;
+                case '\n': os << "\\n"; break;
+                case '\r': os << "\\r"; break;
+                case '\t': os << "\\t"; break;
+                default:
+                    if (c < 0x20) {
+                        os << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+                           << static_cast<int>(c) << std::dec << std::setfill(' ');
+                    } else {
+                        os << static_cast<char>(c);
+                    }
+                    break;
             }
         }
         return os.str();

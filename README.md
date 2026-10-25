@@ -95,8 +95,10 @@ Pre-built binaries: [GitHub releases](https://github.com/Longno242/IL2CPP-Dumper
 Double-click `dumper.exe` for the grey/black GUI:
 - Drop `GameAssembly.dll` (or a game folder) into the top zone
 - Drop `global-metadata.dat` into the second zone
+- Toggle chips for Unity/System include and which outputs to write
+- **Set Folder** picks the dump directory; **Open** opens it
 - Click **Start Dump**
-- **Check Update** queries GitHub releases and can download/replace the EXE
+- **Updates** queries GitHub releases and can download/replace the EXE
 
 CLI (optional):
 

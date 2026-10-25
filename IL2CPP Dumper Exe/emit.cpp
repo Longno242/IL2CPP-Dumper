@@ -1121,11 +1121,9 @@ bool GameDumper::EmitAll(const DumpRoot& root,
 
     const auto index_path = dir / "Index.json";
     const auto prev_index = dir / "Index.prev.json";
-    if (cfg.emit_diff && std::filesystem::exists(index_path)) {
-        std::error_code cec;
-        std::filesystem::remove(prev_index, cec);
-        std::filesystem::rename(index_path, prev_index, cec);
-    }
+    // Keep the previous Index.json on disk until the new one is written successfully,
+    // so a mid-emit failure cannot leave the folder without an index.
+    const bool had_prev_index = cfg.emit_diff && std::filesystem::exists(index_path);
 
     auto fail = [&](const std::filesystem::path& p) {
         log("[!] cant write " + p.string());
@@ -1154,7 +1152,18 @@ bool GameDumper::EmitAll(const DumpRoot& root,
     }
     if (cfg.emit_index) {
         log("[*] writing index...");
-        if (!WriteIndexJson(index_path, root)) return fail(index_path);
+        const auto index_tmp = dir / "Index.json.tmp";
+        if (!WriteIndexJson(index_tmp, root)) {
+            std::filesystem::remove(index_tmp, ec);
+            return fail(index_path);
+        }
+        if (had_prev_index) {
+            std::filesystem::remove(prev_index, ec);
+            std::filesystem::rename(index_path, prev_index, ec);
+        }
+        std::filesystem::remove(index_path, ec);
+        std::filesystem::rename(index_tmp, index_path, ec);
+        if (ec) return fail(index_path);
     }
     if (cfg.emit_strings) {
         log("[*] writing Strings.json...");

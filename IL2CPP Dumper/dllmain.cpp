@@ -50,6 +50,9 @@ static DWORD WINAPI DumpThread(LPVOID) {
                         c.has_il2cpp_exports ? ", il2cpp exports" : "",
                         c.looks_renamed ? ", renamed" : "");
                 }
+                // Prefer the highest-scoring candidate instead of giving up.
+                rrid::set_module_name(candidates.front().name);
+                printf("[*] trying top candidate: %s\n", candidates.front().name.c_str());
             }
         }
     }
@@ -76,6 +79,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
         g_console_open = true;
         FILE* fp = nullptr;
         freopen_s(&fp, "CONOUT$", "w", stdout);
+        freopen_s(&fp, "CONOUT$", "w", stderr);
         freopen_s(&fp, "CONIN$", "r", stdin);
         SetConsoleTitleA("IL2CPP Dumper");
 

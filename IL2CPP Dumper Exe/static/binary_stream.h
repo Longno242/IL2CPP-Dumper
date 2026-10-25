@@ -63,7 +63,10 @@ public:
         return std::string(reinterpret_cast<const char*>(data.data() + offset), end - offset);
     }
 
-    // IL2CPP compressed unsigned int (metadata v27+ type encoding helpers)
+    // IL2CPP compressed unsigned int (Unity BinaryReaderExtensions encoding).
+    // 1-byte: 0xxxxxxx
+    // 2-byte: 10xxxxxx xxxxxxxx
+    // 5-byte: 110xxxxx + 4 payload bytes (leading byte is a marker only)
     uint32_t ReadCompressedUInt32() {
         uint8_t b = ReadU8();
         if ((b & 0x80) == 0) return b;

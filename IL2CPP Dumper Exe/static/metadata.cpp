@@ -153,7 +153,8 @@ void Metadata::DetectAndLoad() {
     const int32_t rawVersion = stream.ReadI32();
     if (rawVersion < 16 || rawVersion > 200) {
         std::ostringstream os;
-        os << "unsupported metadata version " << rawVersion << " (supported 16-39+)";
+        os << "unsupported metadata version " << rawVersion
+           << " (expected 16-39; values up to 200 are accepted for forward compatibility)";
         throw std::runtime_error(os.str());
     }
     version = static_cast<double>(rawVersion);

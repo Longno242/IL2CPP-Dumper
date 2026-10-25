@@ -20,6 +20,7 @@
 #include <shellapi.h>
 
 #include <atomic>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -62,7 +63,21 @@ enum : int {
     ID_BTN_BROWSE_ASM,
     ID_BTN_BROWSE_META,
     ID_BTN_UPDATE,
+    ID_BTN_SET_OUT,
     ID_BTN_OPEN_OUT,
+    ID_OUT_PATH,
+    ID_OPT_UNITY,
+    ID_OPT_CPP,
+    ID_OPT_CS,
+    ID_OPT_RS,
+    ID_OPT_PY,
+    ID_OPT_JSON,
+    ID_OPT_INDEX,
+    ID_OPT_IMAGES,
+    ID_OPT_SCRIPTS,
+    ID_OPT_STUBS,
+    ID_OPT_STRINGS,
+    ID_OPT_DIFF,
     ID_LOG,
 };
 
@@ -86,20 +101,79 @@ struct Ui {
     std::wstring metadata;
     std::wstring output;
 
-    RECT rcAsm{}, rcMeta{}, rcDump{}, rcUpdate{}, rcOpenOut{};
+    RECT rcAsm{}, rcMeta{}, rcDump{}, rcUpdate{}, rcSetOut{}, rcOpenOut{};
     RECT rcBrowseAsm{}, rcBrowseMeta{};
+    RECT rcOutPath{}, rcOpts{};
+    RECT rcOpt[12]{};
     RECT rcLogFrame{};
+
+    DumpConfig cfg{};
 
     int hover = 0;
     std::atomic<bool> dumping{ false };
     std::atomic<bool> updateBusy{ false };
+    std::atomic<bool> alive{ true };
 
     std::mutex logMu;
     std::wstring logPending;
     UpdateInfo lastUpdate{};
 };
 
+struct OptDef {
+    int id;
+    const wchar_t* label;
+    bool DumpConfig::* flag;
+};
+
+constexpr OptDef kOpts[] = {
+    { ID_OPT_UNITY,   L"Unity/System", &DumpConfig::include_unity_engine },
+    { ID_OPT_CPP,     L"C++",          &DumpConfig::emit_cpp },
+    { ID_OPT_CS,      L"C#",           &DumpConfig::emit_cs },
+    { ID_OPT_RS,      L"Rust",         &DumpConfig::emit_rs },
+    { ID_OPT_PY,      L"Python",       &DumpConfig::emit_py },
+    { ID_OPT_JSON,    L"JSON",         &DumpConfig::emit_json },
+    { ID_OPT_INDEX,   L"Index",        &DumpConfig::emit_index },
+    { ID_OPT_IMAGES,  L"Images",       &DumpConfig::emit_images },
+    { ID_OPT_SCRIPTS, L"Scripts",      &DumpConfig::emit_scripts },
+    { ID_OPT_STUBS,   L"Stubs",        &DumpConfig::emit_stubs },
+    { ID_OPT_STRINGS, L"Strings",      &DumpConfig::emit_strings },
+    { ID_OPT_DIFF,    L"Diff",         &DumpConfig::emit_diff },
+};
+static_assert(sizeof(kOpts) / sizeof(kOpts[0]) == 12, "opt rect array size");
+
 Ui g;
+
+bool* OptFlag(int id) {
+    for (const auto& o : kOpts) {
+        if (o.id == id) return &(g.cfg.*(o.flag));
+    }
+    return nullptr;
+}
+
+bool AnyEmitEnabled() {
+    return g.cfg.emit_cpp || g.cfg.emit_cs || g.cfg.emit_rs || g.cfg.emit_py ||
+           g.cfg.emit_json || g.cfg.emit_index || g.cfg.emit_images ||
+           g.cfg.emit_scripts || g.cfg.emit_stubs || g.cfg.emit_strings ||
+           g.cfg.emit_diff;
+}
+
+bool UiAlive() {
+    return g.alive.load() && g.hwnd != nullptr;
+}
+
+void PostUi(UINT msg) {
+    if (UiAlive()) PostMessageW(g.hwnd, msg, 0, 0);
+}
+
+std::wstring PsSingleQuoted(const std::wstring& path) {
+    std::wstring out = L"'";
+    for (wchar_t c : path) {
+        if (c == L'\'') out += L"''";
+        else out += c;
+    }
+    out += L"'";
+    return out;
+}
 
 std::string WideToUtf8(const std::wstring& w) {
     if (w.empty()) return {};
@@ -192,7 +266,7 @@ void AppendLog(const std::wstring& line) {
     if (!g.logPending.empty() && g.logPending.back() != L'\n') g.logPending.push_back(L'\n');
     g.logPending += line;
     if (!line.empty() && line.back() != L'\n') g.logPending.push_back(L'\n');
-    if (g.hwnd) PostMessageW(g.hwnd, MSG_FLUSH_LOG, 0, 0);
+    PostUi(MSG_FLUSH_LOG);
 }
 
 void AppendLogUtf8(const std::string& line) {
@@ -217,29 +291,59 @@ void Layout(HWND hwnd) {
     const int w = rc.right - rc.left;
     const int h = rc.bottom - rc.top;
     const int m = 28;
-    const int gap = 14;
-    const int dropH = 100;
-    const int btnH = 42;
+    const int gap = 12;
+    const int dropH = 86;
+    const int btnH = 40;
     const int top = 78;
 
     g.rcAsm = { m, top, w - m, top + dropH };
     g.rcMeta = { m, top + dropH + gap, w - m, top + dropH * 2 + gap };
 
     const int browseW = 88;
-    g.rcBrowseAsm = { g.rcAsm.right - browseW - 16, g.rcAsm.top + (dropH - 34) / 2,
-                      g.rcAsm.right - 16, g.rcAsm.top + (dropH - 34) / 2 + 34 };
-    g.rcBrowseMeta = { g.rcMeta.right - browseW - 16, g.rcMeta.top + (dropH - 34) / 2,
-                       g.rcMeta.right - 16, g.rcMeta.top + (dropH - 34) / 2 + 34 };
+    g.rcBrowseAsm = { g.rcAsm.right - browseW - 16, g.rcAsm.top + (dropH - 32) / 2,
+                      g.rcAsm.right - 16, g.rcAsm.top + (dropH - 32) / 2 + 32 };
+    g.rcBrowseMeta = { g.rcMeta.right - browseW - 16, g.rcMeta.top + (dropH - 32) / 2,
+                       g.rcMeta.right - 16, g.rcMeta.top + (dropH - 32) / 2 + 32 };
 
-    const int rowY = g.rcMeta.bottom + 22;
-    const int dumpW = 168;
-    const int sideW = 132;
+    const int rowY = g.rcMeta.bottom + 16;
+    const int dumpW = 156;
+    const int sideW = 110;
     g.rcDump = { m, rowY, m + dumpW, rowY + btnH };
     g.rcUpdate = { m + dumpW + gap, rowY, m + dumpW + gap + sideW, rowY + btnH };
-    g.rcOpenOut = { m + dumpW + gap + sideW + gap, rowY,
-                    m + dumpW + gap + sideW + gap + sideW, rowY + btnH };
+    g.rcSetOut = { m + dumpW + gap * 2 + sideW, rowY,
+                   m + dumpW + gap * 2 + sideW * 2, rowY + btnH };
+    g.rcOpenOut = { m + dumpW + gap * 3 + sideW * 2, rowY,
+                    m + dumpW + gap * 3 + sideW * 3, rowY + btnH };
 
-    const int logTop = rowY + btnH + 28;
+    const int outY = rowY + btnH + 12;
+    const int outH = 34;
+    g.rcOutPath = { m, outY, w - m, outY + outH };
+
+    // Option chips in two wrapping rows under the output path.
+    const int chipH = 28;
+    const int chipGap = 6;
+    int ox = m;
+    int oy = outY + outH + 12;
+    const int maxX = w - m;
+    HDC measure = GetDC(hwnd);
+    HFONT oldFont = (HFONT)SelectObject(measure, g.fontLabel ? g.fontLabel : GetStockObject(DEFAULT_GUI_FONT));
+    for (int i = 0; i < 12; ++i) {
+        SIZE sz{};
+        GetTextExtentPoint32W(measure, kOpts[i].label, (int)wcslen(kOpts[i].label), &sz);
+        const int chipW = sz.cx + 22;
+        if (ox + chipW > maxX && ox > m) {
+            ox = m;
+            oy += chipH + chipGap;
+        }
+        g.rcOpt[i] = { ox, oy, ox + chipW, oy + chipH };
+        ox += chipW + chipGap;
+    }
+    SelectObject(measure, oldFont);
+    ReleaseDC(hwnd, measure);
+
+    g.rcOpts = { m, outY + outH + 8, w - m, oy + chipH + 4 };
+
+    const int logTop = g.rcOpts.bottom + 14;
     g.rcLogFrame = { m, logTop, w - m, h - m };
     if (g.logEdit) {
         MoveWindow(g.logEdit, m + 14, logTop + 34, w - m * 2 - 28, h - logTop - m - 48, TRUE);
@@ -296,12 +400,32 @@ bool PtIn(const RECT& r, int x, int y) {
 int HitTest(int x, int y) {
     if (PtIn(g.rcDump, x, y)) return ID_BTN_DUMP;
     if (PtIn(g.rcUpdate, x, y)) return ID_BTN_UPDATE;
+    if (PtIn(g.rcSetOut, x, y)) return ID_BTN_SET_OUT;
     if (PtIn(g.rcOpenOut, x, y)) return ID_BTN_OPEN_OUT;
     if (PtIn(g.rcBrowseAsm, x, y)) return ID_BTN_BROWSE_ASM;
     if (PtIn(g.rcBrowseMeta, x, y)) return ID_BTN_BROWSE_META;
+    for (int i = 0; i < 12; ++i) {
+        if (PtIn(g.rcOpt[i], x, y)) return kOpts[i].id;
+    }
+    if (PtIn(g.rcOutPath, x, y)) return ID_OUT_PATH;
     if (PtIn(g.rcAsm, x, y)) return ID_DROP_ASM;
     if (PtIn(g.rcMeta, x, y)) return ID_DROP_META;
     return 0;
+}
+
+void DrawChip(HDC hdc, const RECT& r, const wchar_t* label, bool on, bool hover) {
+    COLORREF fill, border, text;
+    if (on) {
+        fill = hover ? RGB(48, 72, 54) : RGB(28, 42, 32);
+        border = hover ? RGB(70, 110, 78) : RGB(48, 72, 54);
+        text = COL_OK;
+    } else {
+        fill = hover ? COL_BTN_H : COL_BTN;
+        border = hover ? COL_BORDER_H : COL_BORDER;
+        text = COL_MUTED;
+    }
+    RoundFill(hdc, r, 8, fill, border);
+    DrawTextIn(hdc, r, label, text, g.fontLabel, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
 void DrawPrimaryBtn(HDC hdc, const RECT& r, const wchar_t* label, bool hover, bool enabled) {
@@ -381,12 +505,33 @@ void Paint(HWND hwnd) {
     DrawGhostBtn(mem, g.rcBrowseAsm, L"Browse", g.hover == ID_BTN_BROWSE_ASM, !g.dumping);
     DrawGhostBtn(mem, g.rcBrowseMeta, L"Browse", g.hover == ID_BTN_BROWSE_META, !g.dumping);
 
-    const bool canDump = !g.dumping && !g.assembly.empty() && !g.metadata.empty();
+    const bool canDump = !g.dumping && !g.assembly.empty() && !g.metadata.empty() && AnyEmitEnabled();
     DrawPrimaryBtn(mem, g.rcDump, g.dumping ? L"Dumping..." : L"Start Dump",
                   g.hover == ID_BTN_DUMP, canDump);
     DrawGhostBtn(mem, g.rcUpdate, g.updateBusy ? L"Checking..." : L"Updates",
                  g.hover == ID_BTN_UPDATE, !g.updateBusy);
-    DrawGhostBtn(mem, g.rcOpenOut, L"Output", g.hover == ID_BTN_OPEN_OUT, true);
+    DrawGhostBtn(mem, g.rcSetOut, L"Set Folder", g.hover == ID_BTN_SET_OUT, !g.dumping);
+    DrawGhostBtn(mem, g.rcOpenOut, L"Open", g.hover == ID_BTN_OPEN_OUT, true);
+
+    {
+        const bool hoverOut = g.hover == ID_OUT_PATH || g.hover == ID_BTN_SET_OUT;
+        RoundFill(mem, g.rcOutPath, 10, hoverOut ? COL_SURFACE2 : COL_SURFACE,
+                  hoverOut ? COL_BORDER_H : COL_BORDER);
+        RECT badge = { g.rcOutPath.left + 10, g.rcOutPath.top + 6,
+                       g.rcOutPath.left + 72, g.rcOutPath.bottom - 6 };
+        RoundFill(mem, badge, 6, RGB(36, 36, 42), COL_BORDER);
+        DrawTextIn(mem, badge, L"OUTPUT", COL_MUTED, g.fontLabel,
+                   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        RECT pathRc = { g.rcOutPath.left + 82, g.rcOutPath.top, g.rcOutPath.right - 12, g.rcOutPath.bottom };
+        const std::wstring outText = g.output.empty() ? DesktopGameDumpW() : g.output;
+        DrawTextIn(mem, pathRc, outText.c_str(), COL_TEXT, g.fontUi,
+                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_PATH_ELLIPSIS);
+    }
+
+    for (int i = 0; i < 12; ++i) {
+        const bool on = g.cfg.*(kOpts[i].flag);
+        DrawChip(mem, g.rcOpt[i], kOpts[i].label, on, g.hover == kOpts[i].id);
+    }
 
     RoundFill(mem, g.rcLogFrame, 14, COL_SURFACE, COL_BORDER);
     RECT logLabel = { g.rcLogFrame.left + 18, g.rcLogFrame.top + 10,
@@ -449,7 +594,7 @@ std::wstring OpenFileDialog(HWND owner, bool assemblySlot) {
     return result;
 }
 
-std::wstring OpenFolderDialog(HWND owner) {
+std::wstring OpenFolderDialog(HWND owner, const wchar_t* title = L"Select game folder") {
     IFileOpenDialog* dlg = nullptr;
     if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
                                 IID_PPV_ARGS(&dlg))) || !dlg) {
@@ -459,7 +604,7 @@ std::wstring OpenFolderDialog(HWND owner) {
     DWORD options = 0;
     dlg->GetOptions(&options);
     dlg->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
-    dlg->SetTitle(L"Select game folder");
+    dlg->SetTitle(title ? title : L"Select folder");
 
     std::wstring result;
     if (SUCCEEDED(dlg->Show(owner))) {
@@ -519,10 +664,22 @@ void AssignDroppedPath(const fs::path& path, bool preferAsmSlot) {
     }
 }
 
+void PickOutputFolder() {
+    auto f = OpenFolderDialog(g.hwnd, L"Select dump output folder");
+    if (f.empty()) return;
+    g.output = f;
+    AppendLog(L"[+] output folder: " + g.output);
+    InvalidateRect(g.hwnd, nullptr, FALSE);
+}
+
 void StartDump() {
-    if (g.dumping) return;
+    if (g.dumping || !UiAlive()) return;
     if (g.assembly.empty() || g.metadata.empty()) {
         AppendLog(L"[!] drop both GameAssembly.dll and global-metadata.dat first");
+        return;
+    }
+    if (!AnyEmitEnabled()) {
+        AppendLog(L"[!] enable at least one output format chip");
         return;
     }
     g.dumping = true;
@@ -532,13 +689,15 @@ void StartDump() {
     std::wstring metaPath = g.metadata;
     std::wstring outPath = g.output.empty() ? DesktopGameDumpW() : g.output;
     g.output = outPath;
+    DumpConfig cfg = g.cfg;
 
-    std::thread([asmPath, metaPath, outPath]() {
+    std::thread([asmPath, metaPath, outPath, cfg]() {
         AppendLog(L"[*] assembly : " + asmPath);
         AppendLog(L"[*] metadata : " + metaPath);
         AppendLog(L"[*] output   : " + outPath);
+        AppendLog(std::wstring(L"[*] unity/system images: ") +
+                  (cfg.include_unity_engine ? L"included" : L"excluded"));
 
-        DumpConfig cfg;
         const bool ok = GameDumper::DumpFromFiles(
             WideToUtf8(asmPath), WideToUtf8(metaPath), WideToUtf8(outPath), cfg,
             [](const std::string& msg) { AppendLogUtf8(msg); });
@@ -547,18 +706,22 @@ void StartDump() {
         else AppendLog(L"[!] dump failed");
 
         g.dumping = false;
-        if (g.hwnd) PostMessageW(g.hwnd, MSG_REFRESH, 0, 0);
+        PostUi(MSG_REFRESH);
     }).detach();
 }
 
 void StartUpdateCheck(bool offerDownload) {
-    if (g.updateBusy) return;
+    if (g.updateBusy || !UiAlive()) return;
     g.updateBusy = true;
     InvalidateRect(g.hwnd, nullptr, FALSE);
     AppendLog(L"[*] checking GitHub releases...");
 
     std::thread([offerDownload]() {
         UpdateInfo info = CheckForUpdate();
+        if (!UiAlive()) {
+            g.updateBusy = false;
+            return;
+        }
         g.lastUpdate = info;
         g.updateBusy = false;
 
@@ -570,15 +733,15 @@ void StartUpdateCheck(bool offerDownload) {
         } else {
             AppendLog(L"[*] update available: " + Utf8ToWide(info.latest_tag) +
                       L"  (you have v" + Utf8ToWide(info.current_version) + L")");
-            if (offerDownload && g.hwnd) PostMessageW(g.hwnd, MSG_OFFER_UPDATE, 0, 0);
+            if (offerDownload) PostUi(MSG_OFFER_UPDATE);
         }
-        if (g.hwnd) PostMessageW(g.hwnd, MSG_REFRESH, 0, 0);
+        PostUi(MSG_REFRESH);
     }).detach();
 }
 
 void OfferUpdateDialog() {
     const UpdateInfo& info = g.lastUpdate;
-    if (!info.update_available) return;
+    if (!info.update_available || !UiAlive()) return;
 
     std::wstring msg = L"A new update is available. Would you like to update?\n\n"
                        L"Current:  v" + Utf8ToWide(info.current_version) + L"\n"
@@ -618,7 +781,7 @@ void OfferUpdateDialog() {
         if (!err.empty()) {
             AppendLog(L"[!] download failed: " + Utf8ToWide(err));
             g.updateBusy = false;
-            if (g.hwnd) PostMessageW(g.hwnd, MSG_REFRESH, 0, 0);
+            PostUi(MSG_REFRESH);
             return;
         }
         AppendLog(L"[+] downloaded to " + zipPath.wstring());
@@ -628,8 +791,9 @@ void OfferUpdateDialog() {
         fs::remove_all(extractDir, ec);
         fs::create_directories(extractDir, ec);
         std::wstring ps =
-            L"powershell -NoProfile -Command \"Expand-Archive -Force -Path '" +
-            zipPath.wstring() + L"' -DestinationPath '" + extractDir.wstring() + L"'\"";
+            L"powershell -NoProfile -Command \"Expand-Archive -Force -Path " +
+            PsSingleQuoted(zipPath.wstring()) + L" -DestinationPath " +
+            PsSingleQuoted(extractDir.wstring()) + L"\"";
         STARTUPINFOW si{ sizeof(si) };
         PROCESS_INFORMATION pi{};
         std::vector<wchar_t> cmd(ps.begin(), ps.end());
@@ -667,7 +831,7 @@ void OfferUpdateDialog() {
             AppendLog(L"[!] dumper.exe not found in zip - opening folder");
             ShellExecuteW(nullptr, L"open", extractDir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
             g.updateBusy = false;
-            if (g.hwnd) PostMessageW(g.hwnd, MSG_REFRESH, 0, 0);
+            PostUi(MSG_REFRESH);
             return;
         }
 
@@ -675,7 +839,7 @@ void OfferUpdateDialog() {
         if (!LaunchSelfReplace(found.string(), replaceErr)) {
             AppendLog(L"[!] self-replace failed: " + Utf8ToWide(replaceErr));
             g.updateBusy = false;
-            if (g.hwnd) PostMessageW(g.hwnd, MSG_REFRESH, 0, 0);
+            PostUi(MSG_REFRESH);
             return;
         }
         AppendLog(L"[+] updater scheduled - closing");
@@ -721,7 +885,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         DragAcceptFiles(hwnd, TRUE);
         g.output = DesktopGameDumpW();
         AppendLog(L"Drop GameAssembly.dll and global-metadata.dat, then Start Dump.");
-        AppendLog(L"You can also drop a game folder. Output: " + g.output);
+        AppendLog(L"Use Set Folder to pick output. Toggle chips control what gets written.");
+        AppendLog(L"Default output: " + g.output);
         StartUpdateCheck(true);
         return 0;
     }
@@ -764,6 +929,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         switch (id) {
         case ID_BTN_DUMP: StartDump(); break;
         case ID_BTN_UPDATE: StartUpdateCheck(true); break;
+        case ID_BTN_SET_OUT:
+        case ID_OUT_PATH:
+            PickOutputFolder();
+            break;
         case ID_BTN_OPEN_OUT: {
             if (g.output.empty()) g.output = DesktopGameDumpW();
             fs::create_directories(g.output);
@@ -772,16 +941,28 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         case ID_BTN_BROWSE_ASM: {
             const bool folder = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-            auto f = folder ? OpenFolderDialog(hwnd) : OpenFileDialog(hwnd, true);
+            auto f = folder ? OpenFolderDialog(hwnd, L"Select game folder") : OpenFileDialog(hwnd, true);
             if (!f.empty()) AssignDroppedPath(f, true);
             InvalidateRect(hwnd, nullptr, FALSE);
             break;
         }
         case ID_BTN_BROWSE_META: {
             const bool folder = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-            auto f = folder ? OpenFolderDialog(hwnd) : OpenFileDialog(hwnd, false);
+            auto f = folder ? OpenFolderDialog(hwnd, L"Select game folder") : OpenFileDialog(hwnd, false);
             if (!f.empty()) AssignDroppedPath(f, false);
             InvalidateRect(hwnd, nullptr, FALSE);
+            break;
+        }
+        default: {
+            if (bool* flag = OptFlag(id)) {
+                *flag = !*flag;
+                // Keep at least one emit format on (Unity/System is not an emit).
+                if (id != ID_OPT_UNITY && !AnyEmitEnabled()) {
+                    *flag = true;
+                    AppendLog(L"[!] keep at least one output format enabled");
+                }
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
             break;
         }
         }
@@ -813,6 +994,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         OfferUpdateDialog();
         return 0;
     case WM_DESTROY:
+        g.alive = false;
+        g.hwnd = nullptr;
+        g.logEdit = nullptr;
         if (g.fontTitle) DeleteObject(g.fontTitle);
         if (g.fontUi) DeleteObject(g.fontUi);
         if (g.fontBtn) DeleteObject(g.fontBtn);
@@ -828,7 +1012,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 } // namespace
 
 int RunGui(HINSTANCE instance) {
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    const HRESULT comHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
 
     WNDCLASSEXW wc{ sizeof(wc) };
     wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -840,8 +1024,8 @@ int RunGui(HINSTANCE instance) {
     wc.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
     RegisterClassExW(&wc);
 
-    const int width = 880;
-    const int height = 680;
+    const int width = 920;
+    const int height = 760;
     HWND hwnd = CreateWindowExW(
         WS_EX_ACCEPTFILES,
         wc.lpszClassName,
@@ -858,5 +1042,7 @@ int RunGui(HINSTANCE instance) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+
+    if (SUCCEEDED(comHr)) CoUninitialize();
     return (int)msg.wParam;
 }

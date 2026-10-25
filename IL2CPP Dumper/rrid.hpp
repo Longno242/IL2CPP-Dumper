@@ -194,10 +194,11 @@ public:
 		: name_(name), type_(type), offset_(offset), flags_(flags), field_(field) {
 		module_base_ = rrid::detail::get_module_base();
 
-		if (flags & RRID_FIELD_ATTRIBUTE_STATIC && field) {
-			static_rva_ = CalculateRVA((uint64_t)field, module_base_);
-		}
-		else {
+		// For static fields, il2cpp_field_get_offset is the offset into the class
+		// static_fields blob — not a GameAssembly RVA. Never treat FieldInfo* as data RVA.
+		if (flags & RRID_FIELD_ATTRIBUTE_STATIC) {
+			static_rva_ = offset;
+		} else {
 			static_rva_ = 0;
 		}
 	}
@@ -208,15 +209,14 @@ public:
 	inline uint64_t get_offset() const { return offset_; }
 	inline const void* get_raw() const { return field_; }
 	inline uint64_t get_static_rva() const { return static_rva_; }
-	inline uint64_t get_static_address() const { return (uint64_t)field_; }
+	inline uint64_t get_static_address() const { return 0; }
 	inline bool has_rva() const { return (flags_ & RRID_FIELD_ATTRIBUTE_STATIC) && static_rva_ != 0; }
 
 	inline std::string get_offset_info() const {
 		char buf[64];
 		if (flags_ & RRID_FIELD_ATTRIBUTE_STATIC) {
-			snprintf(buf, sizeof(buf), "RVA: 0x%llX (Absolute: 0x%llX)", static_rva_, (uint64_t)field_);
-		}
-		else {
+			snprintf(buf, sizeof(buf), "Static Offset: 0x%llX", static_rva_);
+		} else {
 			snprintf(buf, sizeof(buf), "Instance Offset: 0x%llX", offset_);
 		}
 		return std::string(buf);
@@ -1133,7 +1133,7 @@ inline const std::vector<RridClass*>& RridImage::get_classes() {
 
 			const char* namespaze = rrid::detail::return_spoofer::spoof_call(ctx.jmp_rdx, ctx.api.get_class_namespace, (void*)klass);
 			if (!namespaze) {
-				continue;
+				namespaze = "";
 			}
 
 			uint64_t key = rrid::detail::fnv1a::hash_class(namespaze, name);
@@ -1185,8 +1185,9 @@ inline std::string RridClass::get_parent_full_name() {
 		if (parent) {
 			const char* pname = rrid::detail::return_spoofer::spoof_call(ctx.jmp_rdx, ctx.api.get_class_name, parent);
 			const char* pns = rrid::detail::return_spoofer::spoof_call(ctx.jmp_rdx, ctx.api.get_class_namespace, parent);
-			if (pname && pns) {
-				parent_name_ = (*pns && *pns) ? (std::string(pns) + "." + pname) : pname;
+			if (pname && *pname) {
+				if (pns && *pns) parent_name_ = std::string(pns) + "." + pname;
+				else parent_name_ = pname;
 			}
 		}
 	}
@@ -1204,10 +1205,11 @@ inline const std::vector<std::string>& RridClass::get_interface_full_names() {
 		while (void* iface = rrid::detail::return_spoofer::spoof_call(ctx.jmp_rdx, ctx.api.get_class_interfaces, (void*)class_, &iter)) {
 			const char* iname = rrid::detail::return_spoofer::spoof_call(ctx.jmp_rdx, ctx.api.get_class_name, iface);
 			const char* ins = rrid::detail::return_spoofer::spoof_call(ctx.jmp_rdx, ctx.api.get_class_namespace, iface);
-			if (!iname || !ins) {
+			if (!iname || !*iname) {
 				continue;
 			}
-			interface_names_.push_back((*ins && *ins) ? (std::string(ins) + "." + iname) : iname);
+			if (ins && *ins) interface_names_.push_back(std::string(ins) + "." + iname);
+			else interface_names_.push_back(iname);
 		}
 	}
 	return interface_names_;
@@ -1449,7 +1451,7 @@ inline const std::vector<RridClass*>& RridClass::get_nested_types() {
 
 			const char* namespaze = rrid::detail::return_spoofer::spoof_call(ctx.jmp_rdx, ctx.api.get_class_namespace, nested_type);
 			if (!namespaze) {
-				continue;
+				namespaze = "";
 			}
 
 			auto cls = std::make_unique<RridClass>(name, namespaze, nested_type);
