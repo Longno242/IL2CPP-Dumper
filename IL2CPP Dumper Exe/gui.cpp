@@ -811,17 +811,31 @@ void OfferUpdateDialog() {
             CloseHandle(pi.hProcess);
         }
 
+        // Prefer arch-tagged names (dumper-x64.exe / dumper-x86.exe), then legacy dumper.exe.
         fs::path found;
-        for (auto& ent : fs::recursive_directory_iterator(extractDir, ec)) {
-            if (ec) break;
-            if (!ent.is_regular_file(ec)) continue;
-            auto n = ent.path().filename().wstring();
+        auto lowerName = [](std::wstring n) {
             for (auto& c : n) c = (wchar_t)towlower(c);
-            if (n == L"dumper.exe" || n == L"il2cppdumper.exe" ||
-                n == L"il2cppdumper-static.exe") {
-                found = ent.path();
-                break;
+            return n;
+        };
+#if defined(_WIN64)
+        const wchar_t* preferred[] = {
+            L"dumper-x64.exe", L"dumper.exe", L"il2cppdumper.exe", L"il2cppdumper-static.exe"
+        };
+#else
+        const wchar_t* preferred[] = {
+            L"dumper-x86.exe", L"dumper.exe", L"il2cppdumper.exe", L"il2cppdumper-static.exe"
+        };
+#endif
+        for (const wchar_t* want : preferred) {
+            for (auto& ent : fs::recursive_directory_iterator(extractDir, ec)) {
+                if (ec) break;
+                if (!ent.is_regular_file(ec)) continue;
+                if (lowerName(ent.path().filename().wstring()) == want) {
+                    found = ent.path();
+                    break;
+                }
             }
+            if (!found.empty()) break;
         }
         if (found.empty()) {
             for (auto& ent : fs::recursive_directory_iterator(extractDir, ec)) {
