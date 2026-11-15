@@ -2,6 +2,7 @@
 #include "il2cpp_binary.h"
 #include <algorithm>
 #include <cstring>
+#include <sstream>
 #include <stdexcept>
 
 namespace static_dump {
@@ -747,24 +748,26 @@ std::string Il2CppBinary::GetTypeName(int32_t typeIndex, const Metadata& meta, i
         case IL2CPP_TYPE_U: return wrapByref("System.UIntPtr");
         case IL2CPP_TYPE_CLASS:
         case IL2CPP_TYPE_VALUETYPE: {
+            auto nameFromTd = [&](const TypeDef& td) {
+                const std::string ns = meta.GetString(td.namespaceIndex);
+                std::string name = meta.GetString(td.nameIndex);
+                if (td.genericContainerIndex >= 0) {
+                    name = meta.FormatGenericTypeName(name, td.genericContainerIndex);
+                }
+                return ns.empty() ? name : (ns + "." + name);
+            };
             const int64_t idx = static_cast<int64_t>(t.datapoint);
             if (Version >= 27.0) {
-                // runtime: typeHandle ÔÇö fall back to byval match
+                // runtime typeHandle — fall back to byval match
                 for (size_t i = 0; i < meta.typeDefs.size(); ++i) {
                     if (meta.typeDefs[i].byvalTypeIndex == typeIndex) {
-                        const auto& td = meta.typeDefs[i];
-                        const std::string ns = meta.GetString(td.namespaceIndex);
-                        const std::string name = meta.GetString(td.nameIndex);
-                        return wrapByref(ns.empty() ? name : (ns + "." + name));
+                        return wrapByref(nameFromTd(meta.typeDefs[i]));
                     }
                 }
                 return wrapByref("TypeHandle");
             }
             if (idx >= 0 && idx < static_cast<int64_t>(meta.typeDefs.size())) {
-                const auto& td = meta.typeDefs[static_cast<size_t>(idx)];
-                const std::string ns = meta.GetString(td.namespaceIndex);
-                const std::string name = meta.GetString(td.nameIndex);
-                return wrapByref(ns.empty() ? name : (ns + "." + name));
+                return wrapByref(nameFromTd(meta.typeDefs[static_cast<size_t>(idx)]));
             }
             return wrapByref("UnknownClass");
         }
@@ -787,12 +790,85 @@ std::string Il2CppBinary::GetTypeName(int32_t typeIndex, const Metadata& meta, i
         }
         case IL2CPP_TYPE_PTR:
             return wrapByref("Ptr");
-        case IL2CPP_TYPE_GENERICINST:
-            return wrapByref("GenericInst");
+        case IL2CPP_TYPE_GENERICINST: {
+            // datapoint -> Il2CppGenericClass { type/def, context { class_inst*, method_inst* } }
+            try {
+                const uint64_t gcFile = MapVATR(t.datapoint);
+                if (!gcFile || gcFile >= data.size()) return wrapByref("GenericInst");
+
+                BinaryStream local(data);
+                local.Is32Bit = Is32Bit;
+                local.Version = Version;
+                local.Seek(static_cast<size_t>(gcFile));
+
+                // Skip type / typeDefinitionIndex field (ptr or index depending on version).
+                if (Version >= 27.0) {
+                    local.ReadUIntPtr(); // Il2CppType* / handle
+                } else {
+                    local.ReadI32(); // typeDefinitionIndex
+                    if (!Is32Bit) local.ReadI32(); // padding on x64 older layouts varies; best-effort
+                }
+                const uint64_t classInstPtr = local.ReadUIntPtr();
+                if (!classInstPtr) return wrapByref("GenericInst");
+
+                const uint64_t instFile = MapVATR(classInstPtr);
+                if (!instFile || instFile + 8 > data.size()) return wrapByref("GenericInst");
+                local.Seek(static_cast<size_t>(instFile));
+                const uint32_t argc = local.ReadU32();
+                if (Is32Bit) { /* align */ }
+                else { local.ReadU32(); } // padding before pointer on x64
+                const uint64_t argvPtr = local.ReadUIntPtr();
+                if (!argvPtr || argc == 0 || argc > 32) return wrapByref("GenericInst");
+
+                // Resolve definition name via byval type match when possible.
+                std::string defName = "Generic";
+                for (size_t i = 0; i < meta.typeDefs.size(); ++i) {
+                    if (meta.typeDefs[i].byvalTypeIndex == typeIndex) {
+                        defName = meta.GetString(meta.typeDefs[i].nameIndex);
+                        const size_t tick = defName.find('`');
+                        if (tick != std::string::npos) defName = defName.substr(0, tick);
+                        const std::string ns = meta.GetString(meta.typeDefs[i].namespaceIndex);
+                        if (!ns.empty()) defName = ns + "." + defName;
+                        break;
+                    }
+                }
+
+                const uint64_t argvFile = MapVATR(argvPtr);
+                if (!argvFile) return wrapByref(defName + "<>");
+                std::ostringstream os;
+                os << defName << '<';
+                for (uint32_t i = 0; i < argc; ++i) {
+                    if (i) os << ", ";
+                    local.Seek(static_cast<size_t>(argvFile + static_cast<uint64_t>(i) * PointerSize()));
+                    const uint64_t typePtr = local.ReadUIntPtr();
+                    if (!typePtr) { os << "?"; continue; }
+                    const auto inner = ReadTypeAt(MapVATR(typePtr));
+                    // Match against loaded types array
+                    std::string argName = "?";
+                    for (int32_t ti = 0; ti < static_cast<int32_t>(types.size()); ++ti) {
+                        if (types[static_cast<size_t>(ti)].datapoint == inner.datapoint &&
+                            types[static_cast<size_t>(ti)].bits == inner.bits) {
+                            argName = GetTypeName(ti, meta, depth + 1);
+                            break;
+                        }
+                    }
+                    os << argName;
+                }
+                os << '>';
+                return wrapByref(os.str());
+            } catch (...) {
+                return wrapByref("GenericInst");
+            }
+        }
         case IL2CPP_TYPE_VAR:
-            return wrapByref("T");
-        case IL2CPP_TYPE_MVAR:
-            return wrapByref("TM");
+        case IL2CPP_TYPE_MVAR: {
+            const int64_t gpIndex = static_cast<int64_t>(t.datapoint);
+            if (gpIndex >= 0 && gpIndex < static_cast<int64_t>(meta.genericParameters.size())) {
+                const std::string n = meta.GetString(meta.genericParameters[static_cast<size_t>(gpIndex)].nameIndex);
+                if (!n.empty()) return wrapByref(n);
+            }
+            return wrapByref(t.type == IL2CPP_TYPE_MVAR ? "TM" : "T");
+        }
         case IL2CPP_TYPE_ARRAY:
             return wrapByref("Array");
         case IL2CPP_TYPE_FNPTR:

@@ -684,8 +684,9 @@ namespace rrid {
 			}
 		}
 
-		// Return-address spoofing: v2 rbx/r15 stub (default) with legacy rdi stub fallback.
+		// Return-address spoofing (x64 only). Win32/x86 always uses direct calls.
 		namespace return_spoofer {
+#if defined(_WIN64)
 			namespace detail {
 #pragma section(".text")
 				__declspec(allocate(".text")) __declspec(selectany) __declspec(align(16))
@@ -927,6 +928,7 @@ namespace rrid {
 				}
 				return true;
 			}
+#endif // _WIN64
 
 			template <typename result, typename... arguments>
 			static inline auto spoof_call(
@@ -934,10 +936,15 @@ namespace rrid {
 				result(*fn)(arguments...),
 				arguments... args
 			) -> result {
+				(void)trampoline;
 				if (get_context().use_direct_calls) {
 					return fn(args...);
 				}
+#if defined(_WIN64)
 				return detail::spoof_call_with_stub(detail::active_stub(), trampoline, fn, args...);
+#else
+				return fn(args...);
+#endif
 			}
 		};
 	}
@@ -1004,6 +1011,7 @@ inline bool rrid::init() {
 		return false;
 	}
 
+#if defined(_WIN64)
 	ctx.jmp_rdx = detail::find_jmp_gadget();
 	if (!ctx.jmp_rdx) {
 		ctx.use_direct_calls = true;
@@ -1013,6 +1021,12 @@ inline bool rrid::init() {
 		ctx.init_error = "return spoofer probe failed (domain_get returned null)";
 		return false;
 	}
+#else
+	// x86: return-address spoof stubs are x64-only. Direct calls are fine for a dumper.
+	ctx.jmp_rdx = nullptr;
+	ctx.use_direct_calls = true;
+	ctx.spoofer_backend_name = "direct-x86";
+#endif
 
 	void* domain = detail::return_spoofer::spoof_call(ctx.jmp_rdx, ctx.api.domain_get);
 	if (!domain) {

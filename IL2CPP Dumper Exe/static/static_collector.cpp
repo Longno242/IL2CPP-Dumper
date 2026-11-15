@@ -3,6 +3,7 @@
 #include "il2cpp_binary.h"
 #include "metadata.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <ctime>
@@ -144,8 +145,47 @@ std::vector<uint8_t> ReadFileBytes(const std::string& path) {
 
 std::string TypeFullName(const Metadata& meta, const TypeDef& td) {
     const std::string ns = meta.GetString(td.namespaceIndex);
-    const std::string name = meta.GetString(td.nameIndex);
+    std::string name = meta.GetString(td.nameIndex);
+    if (td.genericContainerIndex >= 0) {
+        name = meta.FormatGenericTypeName(name, td.genericContainerIndex);
+    }
     return ns.empty() ? name : (ns + "." + name);
+}
+
+std::string BytesToHex(const uint8_t* data, size_t n) {
+    static const char* kHex = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(n * 2);
+    for (size_t i = 0; i < n; ++i) {
+        out.push_back(kHex[(data[i] >> 4) & 0xF]);
+        out.push_back(kHex[data[i] & 0xF]);
+    }
+    return out;
+}
+
+// Cap native preview; stop early on int3 padding runs.
+size_t CaptureNativeBody(const uint8_t* base, size_t available, size_t maxBytes,
+                         std::string& hexOut) {
+    if (!base || available == 0 || maxBytes == 0) {
+        hexOut.clear();
+        return 0;
+    }
+    size_t n = (std::min)(available, maxBytes);
+    size_t int3Run = 0;
+    size_t cut = n;
+    for (size_t i = 0; i < n; ++i) {
+        if (base[i] == 0xCC) {
+            if (++int3Run >= 4) {
+                cut = i + 1 - int3Run;
+                break;
+            }
+        } else {
+            int3Run = 0;
+        }
+    }
+    if (cut == 0 && n > 0) cut = (std::min)(n, size_t{16});
+    hexOut = BytesToHex(base, cut);
+    return cut;
 }
 
 int64_t ReadEnumDefault(const Metadata& meta, const Il2CppBinary& bin, const FieldDefaultValue& dv) {
@@ -304,7 +344,19 @@ DumpClass CollectClass(int typeIndex,
         dm.token = md.token;
         dm.vtable_slot = md.slot == 0xFFFF ? -1 : static_cast<int32_t>(md.slot);
         dm.is_generic = md.genericContainerIndex >= 0;
-        dm.rva = bin.GetMethodRVA(imageName, md);
+        const uint64_t methodPtr = bin.GetMethodPointer(imageName, md);
+        dm.rva = methodPtr ? bin.GetRVA(methodPtr) : 0;
+        if (cfg.emit_method_bodies && methodPtr) {
+            const uint64_t fileOff = bin.MapVATR(methodPtr);
+            if (fileOff && fileOff < bin.data.size()) {
+                const size_t avail = bin.data.size() - static_cast<size_t>(fileOff);
+                dm.body_size = static_cast<uint32_t>(CaptureNativeBody(
+                    bin.data.data() + static_cast<size_t>(fileOff),
+                    avail,
+                    cfg.method_body_max_bytes,
+                    dm.body_hex));
+            }
+        }
 
         for (uint16_t pi = 0; pi < md.parameterCount; ++pi) {
             const int pidx = md.parameterStart + pi;

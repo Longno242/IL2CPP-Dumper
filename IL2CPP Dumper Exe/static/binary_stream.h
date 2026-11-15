@@ -34,6 +34,7 @@ public:
     }
 
     uint8_t ReadU8() { return Read<uint8_t>(); }
+    int16_t ReadI16() { return Read<int16_t>(); }
     uint16_t ReadU16() { return Read<uint16_t>(); }
     uint32_t ReadU32() { return Read<uint32_t>(); }
     uint64_t ReadU64() { return Read<uint64_t>(); }

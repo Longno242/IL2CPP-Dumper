@@ -558,6 +558,10 @@ void WriteClassJson(std::ostream& out, const DumpClass& cls, int indent, bool& f
             }
             out << "], ";
         }
+        if (m.body_size && !m.body_hex.empty()) {
+            out << "\"bodySize\": " << m.body_size << ", ";
+            out << "\"bodyHex\": \"" << m.body_hex << "\", ";
+        }
         out << "\"signature\": \"" << JsonEscape(m.signature) << "\"}";
     }
     if (!cls.methods.empty()) out << "\n" << inner;

@@ -82,6 +82,24 @@ struct FieldDefaultValue {
     int32_t dataIndex = 0;
 };
 
+// Il2CppGenericContainer (classic metadata layout).
+struct GenericContainer {
+    int32_t ownerIndex = 0;   // typeDef or methodDef index
+    int32_t type_argc = 0;
+    int32_t is_method = 0;
+    int32_t genericParameterStart = 0;
+};
+
+// Il2CppGenericParameter.
+struct GenericParameter {
+    int32_t ownerIndex = 0;
+    uint32_t nameIndex = 0;
+    int16_t constraintsStart = 0;
+    int16_t constraintsCount = 0;
+    uint16_t num = 0;
+    uint16_t flags = 0;
+};
+
 struct StringLiteral {
     uint32_t length = 0;
     int32_t dataIndex = 0;
@@ -105,12 +123,17 @@ public:
     std::vector<FieldDefaultValue> fieldDefaultValues;
     std::unordered_map<int32_t, FieldDefaultValue> fieldDefaultByIndex;
     std::vector<StringLiteral> stringLiterals;
+    std::vector<GenericContainer> genericContainers;
+    std::vector<GenericParameter> genericParameters;
     uint32_t stringLiteralDataOffset = 0;
 
     explicit Metadata(std::vector<uint8_t> buf);
 
     std::string GetString(uint32_t index) const;
     bool GetFieldDefault(int32_t fieldIndex, FieldDefaultValue& out) const;
+    // Pretty generic definition name: List`1 -> List<T> using container params.
+    std::string FormatGenericTypeName(const std::string& rawName, int32_t genericContainerIndex) const;
+    std::vector<std::string> GetGenericParamNames(int32_t genericContainerIndex) const;
 
 private:
     void DetectAndLoad();

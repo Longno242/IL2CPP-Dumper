@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## [v1.5.0] - 2026-11-15
+
+### Added
+- **Win32 / x86 builds** — runtime DLL uses direct IL2CPP calls on x86 (x64 spoof stubs are 64-bit only). Inject matching arch.
+- **Native method bodies** — optional `Bodies` chip / `emit_method_bodies` writes capped native hex (`bodyHex` / `bodySize`) at each method RVA in JSON. IL2CPP has no C#/IL left.
+- **Richer generic names** — parses generic containers/parameters; `List\`1` → `List<T>`; improves `GENERICINST` / `VAR` / `MVAR` type names in the static path.
+
+### Changed
+- Version **1.5.0**. Limitations updated: x86 supported; method bodies = native bytes; full concrete generic inflation still not done.
+
 ## [v1.4.4] - 2026-10-25
 
 ### Added

@@ -3,7 +3,7 @@
 [![Release](https://img.shields.io/github/v/release/Longno242/IL2CPP-Dumper?label=release&logo=github)](https://github.com/Longno242/IL2CPP-Dumper/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/Longno242/IL2CPP-Dumper/total?label=downloads&logo=github)](https://github.com/Longno242/IL2CPP-Dumper/releases)
 [![License](https://img.shields.io/github/license/Longno242/IL2CPP-Dumper)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows)](https://github.com/Longno242/IL2CPP-Dumper/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20x86-0078D4?logo=windows)](https://github.com/Longno242/IL2CPP-Dumper/releases)
 
 Dump Unity IL2CPP metadata into readable C++, C#, Rust, Python, and JSON — either from a **running process** or from **files on disk**.
 
@@ -25,8 +25,9 @@ Dump Unity IL2CPP metadata into readable C++, C#, Rust, Python, and JSON — eit
 - Static fields as `_RVA`, instance fields as `_Offset`, methods as `_RVA`
 - Parent types, interfaces, generics, nested types, enums
 - Runtime: auto-detect `GameAssembly` / `UserAssembly`, init retries, renamed-export recovery
-- Static GUI: drag-drop, output toggles, folder picker, GitHub self-update
-- C++20 · Win32 · no third-party runtime deps
+- Static GUI: drag-drop, output toggles (incl. native method **Bodies**), folder picker, GitHub self-update
+- x64 and x86 builds (inject matching arch for the runtime DLL)
+- C++20 · no third-party runtime deps
 
 ---
 
@@ -151,9 +152,10 @@ IL2CPP-Dumper/
 
 ## Limitations
 
-- Metadata and RVAs only — no method bodies or full generic expansion
+- Metadata / RVAs / signatures — optional **native** method-byte previews only (no C# decompile; IL2CPP compiles that away)
+- Generic **names** improved (`List<T>`, inflated labels); full concrete generic-instance inflation is not complete
 - Exotic packers may still need a module-name tweak in `rrid.hpp`
-- Primary target is **x64**
+- **x64 and x86** supported; use the DLL/EXE that matches the game process / PE machine type
 
 ---
 

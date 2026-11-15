@@ -41,6 +41,9 @@ struct DumpMethod {
     bool is_setter = false;
     std::string property_name;
     std::vector<std::string> attributes;
+    // Optional native code preview (IL2CPP methods are compiled; no C# body remains).
+    uint32_t body_size = 0;
+    std::string body_hex;
 };
 
 struct DumpProperty {

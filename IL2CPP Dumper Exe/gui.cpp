@@ -78,6 +78,7 @@ enum : int {
     ID_OPT_STUBS,
     ID_OPT_STRINGS,
     ID_OPT_DIFF,
+    ID_OPT_BODIES,
     ID_LOG,
 };
 
@@ -104,7 +105,7 @@ struct Ui {
     RECT rcAsm{}, rcMeta{}, rcDump{}, rcUpdate{}, rcSetOut{}, rcOpenOut{};
     RECT rcBrowseAsm{}, rcBrowseMeta{};
     RECT rcOutPath{}, rcOpts{};
-    RECT rcOpt[12]{};
+    RECT rcOpt[13]{};
     RECT rcLogFrame{};
 
     DumpConfig cfg{};
@@ -138,8 +139,9 @@ constexpr OptDef kOpts[] = {
     { ID_OPT_STUBS,   L"Stubs",        &DumpConfig::emit_stubs },
     { ID_OPT_STRINGS, L"Strings",      &DumpConfig::emit_strings },
     { ID_OPT_DIFF,    L"Diff",         &DumpConfig::emit_diff },
+    { ID_OPT_BODIES,  L"Bodies",       &DumpConfig::emit_method_bodies },
 };
-static_assert(sizeof(kOpts) / sizeof(kOpts[0]) == 12, "opt rect array size");
+static_assert(sizeof(kOpts) / sizeof(kOpts[0]) == 13, "opt rect array size");
 
 Ui g;
 
@@ -154,7 +156,11 @@ bool AnyEmitEnabled() {
     return g.cfg.emit_cpp || g.cfg.emit_cs || g.cfg.emit_rs || g.cfg.emit_py ||
            g.cfg.emit_json || g.cfg.emit_index || g.cfg.emit_images ||
            g.cfg.emit_scripts || g.cfg.emit_stubs || g.cfg.emit_strings ||
-           g.cfg.emit_diff;
+           g.cfg.emit_diff || g.cfg.emit_method_bodies;
+}
+
+bool IsFilterOnlyOpt(int id) {
+    return id == ID_OPT_UNITY || id == ID_OPT_BODIES;
 }
 
 bool UiAlive() {
@@ -327,7 +333,7 @@ void Layout(HWND hwnd) {
     const int maxX = w - m;
     HDC measure = GetDC(hwnd);
     HFONT oldFont = (HFONT)SelectObject(measure, g.fontLabel ? g.fontLabel : GetStockObject(DEFAULT_GUI_FONT));
-    for (int i = 0; i < 12; ++i) {
+    for (int i = 0; i < 13; ++i) {
         SIZE sz{};
         GetTextExtentPoint32W(measure, kOpts[i].label, (int)wcslen(kOpts[i].label), &sz);
         const int chipW = sz.cx + 22;
@@ -404,7 +410,7 @@ int HitTest(int x, int y) {
     if (PtIn(g.rcOpenOut, x, y)) return ID_BTN_OPEN_OUT;
     if (PtIn(g.rcBrowseAsm, x, y)) return ID_BTN_BROWSE_ASM;
     if (PtIn(g.rcBrowseMeta, x, y)) return ID_BTN_BROWSE_META;
-    for (int i = 0; i < 12; ++i) {
+    for (int i = 0; i < 13; ++i) {
         if (PtIn(g.rcOpt[i], x, y)) return kOpts[i].id;
     }
     if (PtIn(g.rcOutPath, x, y)) return ID_OUT_PATH;
@@ -528,7 +534,7 @@ void Paint(HWND hwnd) {
                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_PATH_ELLIPSIS);
     }
 
-    for (int i = 0; i < 12; ++i) {
+    for (int i = 0; i < 13; ++i) {
         const bool on = g.cfg.*(kOpts[i].flag);
         DrawChip(mem, g.rcOpt[i], kOpts[i].label, on, g.hover == kOpts[i].id);
     }
@@ -957,7 +963,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (bool* flag = OptFlag(id)) {
                 *flag = !*flag;
                 // Keep at least one emit format on (Unity/System is not an emit).
-                if (id != ID_OPT_UNITY && !AnyEmitEnabled()) {
+                if (!IsFilterOnlyOpt(id) && !AnyEmitEnabled()) {
                     *flag = true;
                     AppendLog(L"[!] keep at least one output format enabled");
                 }

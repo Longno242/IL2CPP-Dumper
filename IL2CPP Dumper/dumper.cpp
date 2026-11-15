@@ -1,6 +1,9 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include "dumper.h"
 
+#include <windows.h>
+
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <ctime>
@@ -14,6 +17,49 @@
 #include <vector>
 
 namespace {
+
+    constexpr size_t kRuntimeMethodBodyMax = 128;
+
+    // SEH-safe copy: no C++ objects inside __try (MSVC requirement).
+    bool SafeCopyBytes(const void* address, void* dest, size_t size) {
+        if (!address || !dest || size == 0) return false;
+        __try {
+            std::memcpy(dest, address, size);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    std::string CaptureMethodBodyHex(void* code, uint32_t& sizeOut) {
+        sizeOut = 0;
+        if (!code) return {};
+        uint8_t buf[kRuntimeMethodBodyMax];
+        if (!SafeCopyBytes(code, buf, sizeof(buf))) return {};
+        size_t int3Run = 0;
+        size_t cut = sizeof(buf);
+        for (size_t i = 0; i < sizeof(buf); ++i) {
+            if (buf[i] == 0xCC) {
+                if (++int3Run >= 4) {
+                    cut = i + 1 - int3Run;
+                    break;
+                }
+            } else {
+                int3Run = 0;
+            }
+        }
+        if (cut == 0) cut = 16;
+        static const char* kHex = "0123456789ABCDEF";
+        std::string hex;
+        hex.reserve(cut * 2);
+        for (size_t i = 0; i < cut; ++i) {
+            hex.push_back(kHex[(buf[i] >> 4) & 0xF]);
+            hex.push_back(kHex[buf[i] & 0xF]);
+        }
+        sizeOut = static_cast<uint32_t>(cut);
+        return hex;
+    }
+
 
     std::string CurrentTimestamp() {
         auto now = std::chrono::system_clock::now();
@@ -741,6 +787,14 @@ namespace {
             out << "\"rva\": " << HexJson(m->get_method_rva()) << ", ";
             if (m->get_method_info_rva()) {
                 out << "\"methodInfoRva\": " << HexJson(m->get_method_info_rva()) << ", ";
+            }
+            {
+                uint32_t bodySize = 0;
+                const std::string bodyHex = CaptureMethodBodyHex(m->get_address(), bodySize);
+                if (bodySize && !bodyHex.empty()) {
+                    out << "\"bodySize\": " << bodySize << ", ";
+                    out << "\"bodyHex\": \"" << bodyHex << "\", ";
+                }
             }
             out << "\"signature\": \"" << JsonEscape(BuildSignature(m)) << "\"}";
         }

@@ -19,6 +19,8 @@ struct DumpConfig {
     bool emit_diff = true;
     bool emit_strings = true;
     bool emit_attrs = true;
+    bool emit_method_bodies = false; // native hex at method RVA (IL2CPP has no C#/IL left)
+    size_t method_body_max_bytes = 128;
     bool string_scan = true;
     size_t string_min_length = 4;
     size_t string_max_count = 50000;

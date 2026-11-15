@@ -25,6 +25,92 @@ bool Metadata::GetFieldDefault(int32_t fieldIndex, FieldDefaultValue& out) const
     return true;
 }
 
+std::vector<std::string> Metadata::GetGenericParamNames(int32_t genericContainerIndex) const {
+    std::vector<std::string> names;
+    if (genericContainerIndex < 0 ||
+        genericContainerIndex >= static_cast<int32_t>(genericContainers.size())) {
+        return names;
+    }
+    const auto& gc = genericContainers[static_cast<size_t>(genericContainerIndex)];
+    if (gc.type_argc <= 0 || gc.genericParameterStart < 0) return names;
+    names.reserve(static_cast<size_t>(gc.type_argc));
+    for (int32_t i = 0; i < gc.type_argc; ++i) {
+        const int32_t pidx = gc.genericParameterStart + i;
+        if (pidx < 0 || pidx >= static_cast<int32_t>(genericParameters.size())) {
+            names.push_back("T" + std::to_string(i));
+            continue;
+        }
+        const auto& gp = genericParameters[static_cast<size_t>(pidx)];
+        std::string n = GetString(gp.nameIndex);
+        if (n.empty()) n = "T" + std::to_string(i);
+        names.push_back(std::move(n));
+    }
+    return names;
+}
+
+std::string Metadata::FormatGenericTypeName(const std::string& rawName, int32_t genericContainerIndex) const {
+    if (rawName.empty()) return rawName;
+    const auto params = GetGenericParamNames(genericContainerIndex);
+    if (params.empty()) return rawName;
+
+    // Strip `N arity suffix: List`1 -> List
+    std::string base = rawName;
+    const size_t tick = base.find('`');
+    if (tick != std::string::npos) base = base.substr(0, tick);
+
+    std::ostringstream os;
+    os << base << '<';
+    for (size_t i = 0; i < params.size(); ++i) {
+        if (i) os << ", ";
+        os << params[i];
+    }
+    os << '>';
+    return os.str();
+}
+
+namespace {
+
+void LoadGenericTables(Metadata& meta, uint32_t containersOff, int32_t containersSize,
+                       uint32_t paramsOff, int32_t paramsSize) {
+    meta.genericContainers.clear();
+    meta.genericParameters.clear();
+
+    constexpr int kContainerStride = 16; // 4x int32
+    constexpr int kParamStride = 16;     // owner, name, constraintsStart/Count, num, flags
+
+    if (containersOff && containersSize >= kContainerStride) {
+        const int count = containersSize / kContainerStride;
+        meta.genericContainers.reserve(count);
+        meta.stream.Seek(containersOff);
+        for (int i = 0; i < count; ++i) {
+            GenericContainer gc;
+            gc.ownerIndex = meta.stream.ReadI32();
+            gc.type_argc = meta.stream.ReadI32();
+            gc.is_method = meta.stream.ReadI32();
+            gc.genericParameterStart = meta.stream.ReadI32();
+            meta.genericContainers.push_back(gc);
+        }
+    }
+
+    if (paramsOff && paramsSize >= kParamStride) {
+        const int count = paramsSize / kParamStride;
+        meta.genericParameters.reserve(count);
+        meta.stream.Seek(paramsOff);
+        for (int i = 0; i < count; ++i) {
+            GenericParameter gp;
+            gp.ownerIndex = meta.stream.ReadI32();
+            gp.nameIndex = meta.stream.ReadU32();
+            gp.constraintsStart = static_cast<int16_t>(meta.stream.ReadI16());
+            gp.constraintsCount = static_cast<int16_t>(meta.stream.ReadI16());
+            gp.num = meta.stream.ReadU16();
+            gp.flags = meta.stream.ReadU16();
+            meta.genericParameters.push_back(gp);
+        }
+    }
+}
+
+} // namespace
+
 int Metadata::indexWidthFromCount(int count) const {
     if (count < 0) count = 0;
     if (count <= 0xFF) return 1;
@@ -300,9 +386,7 @@ void Metadata::ReadHeaderClassic() {
     (void)propertiesOffset; (void)propertiesSize;
     (void)parameterDefaultValuesOffset; (void)parameterDefaultValuesSize;
     (void)fieldMarshaledSizesOffset; (void)fieldMarshaledSizesSize;
-    (void)genericParametersOffset; (void)genericParametersSize;
     (void)genericParameterConstraintsOffset; (void)genericParameterConstraintsSize;
-    (void)genericContainersOffset; (void)genericContainersSize;
     (void)vtableMethodsOffset; (void)vtableMethodsSize;
     (void)interfaceOffsetsOffset; (void)interfaceOffsetsSize;
     (void)rgctxEntriesOffset; (void)rgctxEntriesCount;
@@ -367,6 +451,8 @@ void Metadata::ReadHeaderClassic() {
                       interfacesOffset, interfacesSize,
                       fieldDefaultValuesOffset, fieldDefaultValuesSize,
                       stringLiteralOffset, stringLiteralSize);
+    LoadGenericTables(*this, genericContainersOffset, genericContainersSize,
+                      genericParametersOffset, genericParametersSize);
 }
 
 void Metadata::LoadTablesClassic(uint32_t imagesOff, int32_t imagesSize,
@@ -510,9 +596,9 @@ void Metadata::ReadHeaderV38() {
     readSection(); // fieldMarshaledSizes
     const SectionMeta parametersSec = readSection();
     const SectionMeta fieldsSec = readSection();
-    readSection(); // genericParameters
+    const SectionMeta genericParamsSec = readSection();
     readSection(); // genericParameterConstraints
-    readSection(); // genericContainers
+    const SectionMeta genericContainersSec = readSection();
     const SectionMeta nestedSec = readSection();
     const SectionMeta interfacesSec = readSection();
     readSection(); // vtableMethods
@@ -666,6 +752,9 @@ void Metadata::ReadHeaderV38() {
         stringLiterals[i].length = static_cast<uint32_t>(
             stringLiterals[i + 1].dataIndex - stringLiterals[i].dataIndex);
     }
+
+    LoadGenericTables(*this, genericContainersSec.offset, genericContainersSec.sectionSize,
+                      genericParamsSec.offset, genericParamsSec.sectionSize);
 }
 
 } // namespace static_dump
