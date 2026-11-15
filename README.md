@@ -36,14 +36,14 @@ Dump Unity IL2CPP metadata into readable C++, C#, Rust, Python, and JSON — eit
 ### Option A — Static EXE (offline)
 
 1. Download [`dumper-*-static-exe.zip`](https://github.com/Longno242/IL2CPP-Dumper/releases/latest)
-2. Run `dumper.exe`
+2. Run `dumper-x64.exe` or `dumper-x86.exe` (match the GameAssembly arch)
 3. Drop `GameAssembly.dll` and `global-metadata.dat` (or a game folder)
 4. Optionally toggle formats / Unity·System, set the output folder
 5. Click **Start Dump**
 
 ```text
-dumper.exe --cli <GameAssembly.dll> <global-metadata.dat> [output-dir]
-dumper.exe --cli <game-folder>
+dumper-x64.exe --cli <GameAssembly.dll> <global-metadata.dat> [output-dir]
+dumper-x64.exe --cli <game-folder>
 ```
 
 If metadata on disk is encrypted, use the runtime DLL instead.
@@ -52,7 +52,7 @@ If metadata on disk is encrypted, use the runtime DLL instead.
 
 1. Download [`dumper-*-runtime-dll.zip`](https://github.com/Longno242/IL2CPP-Dumper/releases/latest)
 2. Launch the game and wait until IL2CPP is up (usually main menu)
-3. Load `dumper.dll` with your loader
+3. Load `dumper-x64.dll` or `dumper-x86.dll` (match the process arch)
 4. Watch the **IL2CPP Dumper** console — output goes to `Desktop\GameDump\`
 
 ---
